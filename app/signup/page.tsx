@@ -4,13 +4,17 @@ import type React from "react"
 
 import { useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
+import { supabase } from "@/lib/supabase"
+import { toast } from "sonner"
 
 export default function SignupPage() {
+  const router = useRouter()
   const searchParams = useSearchParams()
   const defaultType = searchParams.get("type") || "farmer"
 
@@ -21,11 +25,65 @@ export default function SignupPage() {
   const [name, setName] = useState("")
   const [address, setAddress] = useState("")
   const [phone, setPhone] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    // Handle signup logic here
-    console.log("Signup attempt with:", { userType, email, password, name, address, phone })
+
+    if (password !== confirmPassword) {
+      toast.error("Passwords do not match")
+      return
+    }
+
+    setIsLoading(true)
+    try {
+      // Sign up with Supabase
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            user_type: userType,
+            name,
+            address,
+            phone
+          }
+        }
+      })
+
+      if (authError) throw authError
+
+      // Insert additional user data into the profiles table
+      const { error: profileError } = await supabase
+        .from('profiles')
+        .insert([
+          {
+            id: authData.user?.id,
+            user_type: userType,
+            name,
+            address,
+            phone,
+            email
+          }
+        ])
+
+      if (profileError) throw profileError
+
+      toast.success("Account created successfully! Please check your email to verify your account.")
+      router.push("/login")
+    } catch (error: any) {
+      console.error("Signup error:", error)
+      // Show more detailed error message
+      if (error.message) {
+        toast.error(error.message)
+      } else if (error.error_description) {
+        toast.error(error.error_description)
+      } else {
+        toast.error("Failed to create account. Please try again.")
+      }
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -112,7 +170,7 @@ export default function SignupPage() {
                 required
               />
             </div>
-            <Button type="submit" className="w-full">
+            <Button type="submit" className="w-full" disabled={isLoading}>
               Create Account
             </Button>
           </form>
