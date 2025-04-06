@@ -1,77 +1,264 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Plus, Trash, Save, Tag } from "lucide-react"
+import { toast } from "sonner"
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DatePicker } from "@/components/date-picker"
+import { Plus, Trash, Edit2, Save } from "lucide-react"
+import { useRouter } from "next/navigation"
+
+// Define the type for our ingredient data
+interface Ingredient {
+  id: number
+  name: string
+  store_id: string
+  expiration_date: string
+  status: string
+  amount: number
+  type: string
+}
+
+// Helper function to capitalize the first letter of a string
+const capitalizeFirstLetter = (string: string) => {
+  return string.charAt(0).toUpperCase() + string.slice(1).toLowerCase();
+}
 
 export function GroceryInventory() {
-  const [inventory, setInventory] = useState([
-    { id: 1, name: "Lettuce", category: "Produce", quantity: "20 lbs", expiry: "Today", status: "Expiring" },
-    { id: 2, name: "Bread", category: "Bakery", quantity: "15 loaves", expiry: "Tomorrow", status: "Expiring" },
-    { id: 3, name: "Milk", category: "Dairy", quantity: "10 gallons", expiry: "2 days", status: "Expiring" },
-    { id: 4, name: "Apples", category: "Produce", quantity: "30 lbs", expiry: "3 days", status: "Good" },
-    { id: 5, name: "Chicken", category: "Meat", quantity: "25 lbs", expiry: "Today", status: "Expiring" },
-  ])
-
+  const router = useRouter()
+  const [ingredients, setIngredients] = useState<Ingredient[]>([])
+  const [loading, setLoading] = useState(true)
   const [isAdding, setIsAdding] = useState(false)
-  const [newItem, setNewItem] = useState({
+  const [editingId, setEditingId] = useState<number | null>(null)
+  const [storeId, setStoreId] = useState<string | null>(null)
+  const [newIngredient, setNewIngredient] = useState({
     name: "",
-    category: "",
-    quantity: "",
-    unit: "lbs",
-    expiry: undefined as Date | undefined,
+    expiration_date: "",
+    status: "Expiring",
+    amount: 1,
+    type: "Produce (Fruit)"
+  })
+  const [editForm, setEditForm] = useState({
+    name: "",
+    expiration_date: "",
+    status: "",
+    amount: 0,
+    type: ""
   })
 
-  const handleAddItem = () => {
-    if (newItem.name && newItem.category && newItem.quantity) {
-      setInventory([
-        ...inventory,
-        {
-          id: Date.now(),
-          name: newItem.name,
-          category: newItem.category,
-          quantity: `${newItem.quantity} ${newItem.unit}`,
-          expiry: newItem.expiry ? new Date(newItem.expiry).toLocaleDateString() : "Unknown",
-          status:
-            newItem.expiry && new Date(newItem.expiry) <= new Date(Date.now() + 2 * 24 * 60 * 60 * 1000)
-              ? "Expiring"
-              : "Good",
-        },
-      ])
+  // Get current store's ID
+  const getCurrentStoreId = async () => {
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      
+      if (authError) throw authError
+      
+      if (!user) {
+        toast.error("Please log in to view your inventory")
+        router.push('/login')
+        return null
+      }
 
-      setNewItem({
-        name: "",
-        category: "",
-        quantity: "",
-        unit: "lbs",
-        expiry: undefined,
-      })
-      setIsAdding(false)
+      // Check if user exists in Stores table
+      const { data: storeData, error: storeError } = await supabase
+        .from('Stores')
+        .select('id')
+        .eq('id', user.id)
+        .single()
+
+      if (storeError) {
+        if (storeError.code === 'PGRST116') { // No rows returned
+          toast.error("Access denied. This account is not registered as a store")
+          router.push('/login')
+          return null
+        }
+        throw storeError
+      }
+
+      return storeData.id
+    } catch (error) {
+      console.error('Error getting store ID:', error)
+      toast.error('Failed to authenticate store')
+      return null
     }
   }
 
-  const handleRemoveItem = (id: number) => {
-    setInventory(inventory.filter((item) => item.id !== id))
+  // Fetch ingredients from Supabase
+  const fetchIngredients = async () => {
+    try {
+      if (!storeId) return
+
+      setLoading(true)
+      const { data, error } = await supabase
+        .from('Ingredients')
+        .select('*')
+        .eq('store_id', storeId)
+        .order('expiration_date', { ascending: true })
+
+      if (error) throw error
+
+      // Ensure all types are capitalized
+      const formattedData = data?.map(item => ({
+        ...item,
+        type: capitalizeFirstLetter(item.type)
+      })) || []
+
+      setIngredients(formattedData)
+    } catch (error: any) {
+      console.error('Error fetching ingredients:', error)
+      toast.error('Failed to load ingredients')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const createListing = (item: any) => {
-    // This would typically navigate to the listing creation page with pre-filled data
-    console.log(`Creating listing for ${item.name}`)
-    alert(`Creating listing for ${item.name}. This would navigate to the listing form.`)
+  // Add a new ingredient
+  const handleAddIngredient = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!storeId) {
+      toast.error("Please log in to add ingredients")
+      return
+    }
+
+    try {
+      // Ensure type is capitalized before saving
+      const ingredientToSave = {
+        ...newIngredient,
+        store_id: storeId,
+        type: capitalizeFirstLetter(newIngredient.type)
+      }
+      
+      const { data, error } = await supabase
+        .from('Ingredients')
+        .insert([ingredientToSave])
+        .select()
+
+      if (error) throw error
+
+      setIngredients([...ingredients, ...data])
+      setNewIngredient({
+        name: "",
+        expiration_date: "",
+        status: "Expiring",
+        amount: 1,
+        type: "Produce (Fruit)"
+      })
+      setIsAdding(false)
+      toast.success('Ingredient added successfully')
+    } catch (error: any) {
+      console.error('Error adding ingredient:', error)
+      toast.error('Failed to add ingredient')
+    }
   }
+
+  // Delete an ingredient
+  const handleDeleteIngredient = async (id: number) => {
+    if (!storeId) return
+
+    try {
+      const { error } = await supabase
+        .from('Ingredients')
+        .delete()
+        .eq('id', id)
+        .eq('store_id', storeId) // Ensure we can only delete our own ingredients
+
+      if (error) throw error
+
+      setIngredients(ingredients.filter(ingredient => ingredient.id !== id))
+      toast.success('Ingredient deleted successfully')
+    } catch (error: any) {
+      console.error('Error deleting ingredient:', error)
+      toast.error('Failed to delete ingredient')
+    }
+  }
+
+  // Start editing an ingredient
+  const handleStartEdit = (ingredient: Ingredient) => {
+    if (ingredient.store_id !== storeId) {
+      toast.error("You can only edit your own ingredients")
+      return
+    }
+    
+    setEditingId(ingredient.id)
+    setEditForm({
+      name: ingredient.name,
+      expiration_date: ingredient.expiration_date,
+      status: ingredient.status,
+      amount: ingredient.amount,
+      type: ingredient.type
+    })
+  }
+
+  // Save edited ingredient
+  const handleSaveEdit = async (id: number) => {
+    if (!storeId) return
+
+    try {
+      // Ensure type is capitalized before saving
+      const updatedData = {
+        ...editForm,
+        type: capitalizeFirstLetter(editForm.type)
+      }
+      
+      const { error } = await supabase
+        .from('Ingredients')
+        .update(updatedData)
+        .eq('id', id)
+        .eq('store_id', storeId) // Ensure we can only update our own ingredients
+
+      if (error) throw error
+
+      // Update local state
+      setIngredients(ingredients.map(item => 
+        item.id === id ? { ...item, ...updatedData } : item
+      ))
+      
+      setEditingId(null)
+      toast.success('Ingredient updated successfully')
+    } catch (error: any) {
+      console.error('Error updating ingredient:', error)
+      toast.error('Failed to update ingredient')
+    }
+  }
+
+  // Handle type change in the add form
+  const handleTypeChange = (value: string) => {
+    setNewIngredient({ ...newIngredient, type: value })
+  }
+
+  // Handle type change in the edit form
+  const handleEditTypeChange = (value: string) => {
+    setEditForm({ ...editForm, type: value })
+  }
+
+  // Initialize store ID and load ingredients
+  useEffect(() => {
+    const init = async () => {
+      const id = await getCurrentStoreId()
+      if (id) {
+        setStoreId(id)
+      }
+    }
+    init()
+  }, [])
+
+  // Load ingredients when storeId changes
+  useEffect(() => {
+    if (storeId) {
+      fetchIngredients()
+    }
+  }, [storeId])
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div className="space-y-1">
           <h2 className="text-2xl font-bold tracking-tight">Grocery Inventory</h2>
-          <p className="text-muted-foreground">Manage your expiring food items and create listings</p>
+          <p className="text-muted-foreground">Manage your expiring food items</p>
         </div>
         <Button onClick={() => setIsAdding(true)} disabled={isAdding}>
           <Plus className="mr-2 h-4 w-4" /> Add Item
@@ -85,75 +272,81 @@ export function GroceryInventory() {
             <CardDescription>Enter the details of the food item you want to add to your inventory</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="item-name">Item Name</Label>
-                <Input
-                  id="item-name"
-                  placeholder="e.g., Lettuce, Bread, Milk"
-                  value={newItem.name}
-                  onChange={(e) => setNewItem({ ...newItem, name: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="item-category">Category</Label>
-                <Select value={newItem.category} onValueChange={(value) => setNewItem({ ...newItem, category: value })}>
-                  <SelectTrigger id="item-category">
-                    <SelectValue placeholder="Select category" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="Produce">Produce</SelectItem>
-                    <SelectItem value="Bakery">Bakery</SelectItem>
-                    <SelectItem value="Dairy">Dairy</SelectItem>
-                    <SelectItem value="Meat">Meat</SelectItem>
-                    <SelectItem value="Dry Goods">Dry Goods</SelectItem>
-                    <SelectItem value="Other">Other</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
+            <form onSubmit={handleAddIngredient} className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
                 <div className="space-y-2">
-                  <Label htmlFor="item-quantity">Quantity</Label>
+                  <Label htmlFor="name">Item Name</Label>
                   <Input
-                    id="item-quantity"
-                    type="number"
-                    min="1"
-                    placeholder="Amount"
-                    value={newItem.quantity}
-                    onChange={(e) => setNewItem({ ...newItem, quantity: e.target.value })}
+                    id="name"
+                    placeholder="E.G. Carrots, Eggs"
+                    value={newIngredient.name}
+                    onChange={(e) => setNewIngredient({ ...newIngredient, name: e.target.value })}
+                    required
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="item-unit">Unit</Label>
-                  <Select value={newItem.unit} onValueChange={(value) => setNewItem({ ...newItem, unit: value })}>
-                    <SelectTrigger id="item-unit">
-                      <SelectValue placeholder="Unit" />
+                  <Label htmlFor="type">Type</Label>
+                  <Select 
+                    value={newIngredient.type} 
+                    onValueChange={handleTypeChange}
+                  >
+                    <SelectTrigger id="type">
+                      <SelectValue placeholder="Select type" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="lbs">lbs</SelectItem>
-                      <SelectItem value="kg">kg</SelectItem>
-                      <SelectItem value="units">units</SelectItem>
-                      <SelectItem value="loaves">loaves</SelectItem>
-                      <SelectItem value="gallons">gallons</SelectItem>
-                      <SelectItem value="boxes">boxes</SelectItem>
+                      <SelectItem value="Produce (Fruit)">Produce (Fruit)</SelectItem>
+                      <SelectItem value="Produce (Vegetable)">Produce (Vegetable)</SelectItem>
+                      <SelectItem value="Protein">Protein</SelectItem>
+                      <SelectItem value="Bakery">Bakery</SelectItem>
+                      <SelectItem value="Other">Other</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="amount">Amount (lbs)</Label>
+                  <Input
+                    id="amount"
+                    type="number"
+                    min="1"
+                    value={newIngredient.amount}
+                    onChange={(e) => setNewIngredient({ ...newIngredient, amount: parseInt(e.target.value) })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="expiration_date">Expiration Date</Label>
+                  <Input
+                    id="expiration_date"
+                    type="date"
+                    value={newIngredient.expiration_date}
+                    onChange={(e) => setNewIngredient({ ...newIngredient, expiration_date: e.target.value })}
+                    required
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="status">Status</Label>
+                  <Select 
+                    value={newIngredient.status} 
+                    onValueChange={(value) => setNewIngredient({ ...newIngredient, status: value })}
+                  >
+                    <SelectTrigger id="status">
+                      <SelectValue placeholder="Select status" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="Expiring">Expiring</SelectItem>
+                      <SelectItem value="Expired">Expired</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="item-expiry">Expiry Date</Label>
-                <DatePicker date={newItem.expiry} setDate={(date) => setNewItem({ ...newItem, expiry: date })} />
+              <div className="flex justify-end space-x-2">
+                <Button type="button" variant="outline" onClick={() => setIsAdding(false)}>
+                  Cancel
+                </Button>
+                <Button type="submit">Save</Button>
               </div>
-            </div>
+            </form>
           </CardContent>
-          <CardFooter className="flex justify-between">
-            <Button variant="outline" onClick={() => setIsAdding(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleAddItem}>
-              <Save className="mr-2 h-4 w-4" /> Save
-            </Button>
-          </CardFooter>
         </Card>
       )}
 
@@ -163,50 +356,135 @@ export function GroceryInventory() {
           <CardDescription>Your current food items and their expiry status</CardDescription>
         </CardHeader>
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Item Name</TableHead>
-                <TableHead>Category</TableHead>
-                <TableHead>Quantity</TableHead>
-                <TableHead>Expiry</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {inventory.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium">{item.name}</TableCell>
-                  <TableCell>{item.category}</TableCell>
-                  <TableCell>{item.quantity}</TableCell>
-                  <TableCell>{item.expiry}</TableCell>
-                  <TableCell>
-                    <div
-                      className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                        item.status === "Expiring" ? "bg-yellow-100 text-yellow-800" : "bg-green-100 text-green-800"
-                      }`}
-                    >
-                      {item.status}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <Button variant="ghost" size="icon" onClick={() => createListing(item)}>
-                      <Tag className="h-4 w-4" />
-                      <span className="sr-only">Create Listing</span>
-                    </Button>
-                    <Button variant="ghost" size="icon" onClick={() => handleRemoveItem(item.id)}>
-                      <Trash className="h-4 w-4" />
-                      <span className="sr-only">Remove</span>
-                    </Button>
-                  </TableCell>
+          {loading ? (
+            <div>Loading...</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Item Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Amount (lbs)</TableHead>
+                  <TableHead>Expiration Date</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+              </TableHeader>
+              <TableBody>
+                {ingredients.map((item) => (
+                  <TableRow key={item.id}>
+                    <TableCell className="font-medium">
+                      {editingId === item.id ? (
+                        <Input
+                          value={editForm.name}
+                          onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        />
+                      ) : (
+                        item.name
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {editingId === item.id ? (
+                        <Select 
+                          value={editForm.type} 
+                          onValueChange={handleEditTypeChange}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Produce (Fruit)">Produce (Fruit)</SelectItem>
+                            <SelectItem value="Produce (Vegetable)">Produce (Vegetable)</SelectItem>
+                            <SelectItem value="Protein">Protein</SelectItem>
+                            <SelectItem value="Bakery">Bakery</SelectItem>
+                            <SelectItem value="Other">Other</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        item.type
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {editingId === item.id ? (
+                        <Input
+                          type="number"
+                          min="1"
+                          value={editForm.amount}
+                          onChange={(e) => setEditForm({ ...editForm, amount: parseInt(e.target.value) })}
+                        />
+                      ) : (
+                        item.amount
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {editingId === item.id ? (
+                        <Input
+                          type="date"
+                          value={editForm.expiration_date}
+                          onChange={(e) => setEditForm({ ...editForm, expiration_date: e.target.value })}
+                        />
+                      ) : (
+                        new Date(item.expiration_date).toLocaleDateString()
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {editingId === item.id ? (
+                        <Select 
+                          value={editForm.status} 
+                          onValueChange={(value) => setEditForm({ ...editForm, status: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="Expiring">Expiring</SelectItem>
+                            <SelectItem value="Expired">Expired</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <span className={`px-2 py-1 rounded-full text-xs ${
+                          item.status === 'Expired' ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
+                        }`}>
+                          {item.status}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {editingId === item.id ? (
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={() => handleSaveEdit(item.id)}
+                        >
+                          <Save className="h-4 w-4" />
+                          <span className="sr-only">Save</span>
+                        </Button>
+                      ) : (
+                        <Button 
+                          variant="ghost" 
+                          size="icon" 
+                          onClick={() => handleStartEdit(item)}
+                        >
+                          <Edit2 className="h-4 w-4" />
+                          <span className="sr-only">Edit</span>
+                        </Button>
+                      )}
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        onClick={() => handleDeleteIngredient(item.id)}
+                      >
+                        <Trash className="h-4 w-4" />
+                        <span className="sr-only">Delete</span>
+                      </Button>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
         </CardContent>
       </Card>
     </div>
   )
 }
-
