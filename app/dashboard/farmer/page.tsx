@@ -93,6 +93,7 @@ export default function FarmerDashboard() {
     status: string;
     purchase_date: string;
   }[]>([])
+  const [processingOrder, setProcessingOrder] = useState<string | null>(null);
 
   // Get current farm's location
   const getCurrentFarmLocation = async () => {
@@ -318,6 +319,157 @@ export default function FarmerDashboard() {
   useEffect(() => {
     fetchOrders()
   }, [])
+
+  // Handle completing an order
+  const handleCompleteOrder = async (orderId: string) => {
+    try {
+      setProcessingOrder(orderId);
+      console.log('Starting to complete order:', orderId);
+
+      // Get the order details first
+      const { data: order, error: orderError } = await supabase
+        .from('Purchases')
+        .select(`
+          *,
+          Feed!inner (
+            id,
+            amount,
+            feed_type,
+            store_id
+          )
+        `)
+        .eq('id', orderId)
+        .single();
+
+      if (orderError) {
+        console.error('Order fetch error:', orderError);
+        throw new Error(`Failed to fetch order: ${orderError.message}`);
+      }
+
+      if (!order || !order.Feed) {
+        console.error('No order or feed data found:', order);
+        throw new Error('Order or feed data not found');
+      }
+
+      console.log('Found order:', order);
+
+      // Calculate new feed amount
+      const newFeedAmount = order.Feed.amount - order.amount;
+      console.log('Calculating new feed amount:', {
+        currentAmount: order.Feed.amount,
+        purchasedAmount: order.amount,
+        newAmount: newFeedAmount
+      });
+
+      // Calculate reduction ratio for ingredients
+      const reductionRatio = order.amount / order.Feed.amount;
+
+      // Start transaction
+      // 1. Update order status and remove feed_id reference
+      const { error: statusError } = await supabase
+        .from('Purchases')
+        .update({ 
+          status: 'completed',
+          feed_id: null  // Remove reference to allow feed deletion
+        })
+        .eq('id', orderId);
+
+      if (statusError) {
+        console.error('Status update error:', statusError);
+        throw new Error(`Failed to update status: ${statusError.message}`);
+      }
+
+      console.log('Updated order status to completed');
+
+      // 2. Handle feed
+      if (newFeedAmount <= 0) {
+        // Delete the feed if amount would be 0 or less
+        const { error: deleteFeedError } = await supabase
+          .from('Feed')
+          .delete()
+          .eq('id', order.feed_id);
+
+        if (deleteFeedError) {
+          console.error('Feed deletion error:', deleteFeedError);
+          throw new Error(`Failed to delete feed: ${deleteFeedError.message}`);
+        }
+        console.log('Deleted feed record');
+      } else {
+        // Update the feed amount if there's still some left
+        const { error: feedError } = await supabase
+          .from('Feed')
+          .update({ amount: newFeedAmount })
+          .eq('id', order.feed_id);
+
+        if (feedError) {
+          console.error('Feed update error:', feedError);
+          throw new Error(`Failed to update feed: ${feedError.message}`);
+        }
+        console.log('Updated feed amount');
+      }
+
+      // 3. Handle ingredients
+      console.log('Fetching ingredients for feed type:', order.Feed.feed_type);
+      const { data: ingredients, error: ingredientsError } = await supabase
+        .from('Ingredients')
+        .select('*')
+        .eq('store_id', order.Feed.store_id)
+        .eq('type', order.Feed.feed_type.toLowerCase());
+
+      if (ingredientsError) {
+        console.error('Ingredients fetch error:', ingredientsError);
+        throw new Error(`Failed to fetch ingredients: ${ingredientsError.message}`);
+      }
+
+      console.log('Found ingredients:', ingredients);
+      
+      // Update or delete each ingredient
+      for (const ingredient of ingredients) {
+        const newAmount = ingredient.amount - (ingredient.amount * reductionRatio);
+        console.log('Processing ingredient:', {
+          id: ingredient.id,
+          currentAmount: ingredient.amount,
+          newAmount: newAmount
+        });
+
+        if (newAmount <= 0) {
+          // Delete the ingredient if amount would be 0 or less
+          const { error: deleteIngredientError } = await supabase
+            .from('Ingredients')
+            .delete()
+            .eq('id', ingredient.id);
+
+          if (deleteIngredientError) {
+            console.error('Ingredient deletion error:', deleteIngredientError);
+            throw new Error(`Failed to delete ingredient: ${deleteIngredientError.message}`);
+          }
+          console.log('Deleted ingredient:', ingredient.id);
+        } else {
+          // Update the ingredient amount if there's still some left
+          const { error: updateError } = await supabase
+            .from('Ingredients')
+            .update({ amount: newAmount })
+            .eq('id', ingredient.id);
+
+          if (updateError) {
+            console.error('Ingredient update error:', updateError);
+            throw new Error(`Failed to update ingredient: ${updateError.message}`);
+          }
+          console.log('Updated ingredient:', ingredient.id);
+        }
+      }
+
+      console.log('Order completion successful');
+      toast.success('Order completed successfully');
+      fetchOrders(); // Refresh the orders list
+      fetchListings(); // Refresh the listings to reflect deleted feeds
+    } catch (error: any) {
+      console.error('Error completing order:', error);
+      toast.error(error.message || 'Failed to complete order');
+    } finally {
+      setProcessingOrder(null);
+    }
+  };
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -577,6 +729,15 @@ export default function FarmerDashboard() {
                               <div className="text-sm text-muted-foreground">
                                 Purchased on {new Date(order.purchase_date).toLocaleDateString()}
                               </div>
+                              {order.status === 'pending' && (
+                                <Button 
+                                  onClick={() => handleCompleteOrder(order.id)}
+                                  disabled={processingOrder === order.id}
+                                  className="mt-2"
+                                >
+                                  {processingOrder === order.id ? 'Processing...' : 'Complete Order'}
+                                </Button>
+                              )}
                             </div>
                           </div>
                         ))
@@ -596,10 +757,14 @@ export default function FarmerDashboard() {
       {selectedFeed && (
         <FeedDetailsModal
           isOpen={!!selectedFeed}
-          onClose={() => setSelectedFeed(null)}
+          onClose={() => {
+            setSelectedFeed(null);
+            fetchOrders(); // Fetch orders when modal closes
+          }}
           feed={selectedFeed.feed}
           storeName={selectedFeed.storeName}
           storeAddress={selectedFeed.storeAddress}
+          onPurchaseComplete={fetchOrders} // Add this prop to refresh orders after purchase
         />
       )}
     </div>

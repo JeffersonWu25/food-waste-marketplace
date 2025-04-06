@@ -32,6 +32,7 @@ interface FeedDetailsModalProps {
   feed: Feed
   storeName: string
   storeAddress: string
+  onPurchaseComplete?: () => void
 }
 
 export function FeedDetailsModal({
@@ -40,6 +41,7 @@ export function FeedDetailsModal({
   feed,
   storeName,
   storeAddress,
+  onPurchaseComplete
 }: FeedDetailsModalProps) {
   const [ingredients, setIngredients] = useState<Ingredient[]>([])
   const [loading, setLoading] = useState(true)
@@ -139,6 +141,7 @@ export function FeedDetailsModal({
 
       console.log('Purchase successful:', purchaseResult)
       toast.success('Purchase successful! Check your orders for details.')
+      onPurchaseComplete?.();
       onClose()
     } catch (error: any) {
       console.error('Error making purchase:', error)
