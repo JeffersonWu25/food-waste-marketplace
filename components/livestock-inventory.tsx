@@ -292,6 +292,7 @@ export function LivestockInventory() {
                     <SelectItem value="Cow">Cow</SelectItem>
                     <SelectItem value="Pig">Pig</SelectItem>
                     <SelectItem value="Chicken">Chicken</SelectItem>
+                    <SelectItem value="Goat">Goat</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -352,6 +353,7 @@ export function LivestockInventory() {
                             <SelectItem value="Cow">Cow</SelectItem>
                             <SelectItem value="Pig">Pig</SelectItem>
                             <SelectItem value="Chicken">Chicken</SelectItem>
+                            <SelectItem value="Goat">Goat</SelectItem>
                           </SelectContent>
                         </Select>
                       ) : (
