@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -15,18 +16,33 @@ import { GoogleMap } from "@/components/google-map"
 import { FarmerSidebar } from "@/components/farmer-sidebar"
 import { LivestockInventory } from "@/components/livestock-inventory"
 import { FeedRecommendations } from "@/components/feed-recommendations"
+import { supabase } from "@/lib/supabase"
+import { geocodeAddress } from "@/lib/geocoding"
+import { toast } from "sonner"
 
-interface Listing {
-  id: number
-  storeName: string
+interface Store {
+  id: string
+  name: string
   address: string
+  phone: string
+  email: string
+  rating: number
+  lat?: number
+  lng?: number
+}
+
+interface Feed {
+  id: string
+  store_id: string
+  feed_type: string
+  amount: number
+  ingredients: string
+  price: number
+}
+
+interface Listing extends Store {
+  feed: Feed[]
   distance: number
-  feedType: string
-  quantity: string
-  price: string
-  expiry: string
-  lat: number
-  lng: number
 }
 
 interface Livestock {
@@ -35,101 +51,208 @@ interface Livestock {
   chickens: number
 }
 
+// Haversine formula to calculate distance between two points
+function calculateHaversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 3959; // Earth's radius in miles
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = 
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
 export default function FarmerDashboard() {
+  const router = useRouter()
   const [listings, setListings] = useState<Listing[]>([])
+  const [loading, setLoading] = useState(true)
   const [distance, setDistance] = useState([25])
   const [feedType, setFeedType] = useState("all")
-  const [showMap, setShowMap] = useState(true)
+  const [showMap, setShowMap] = useState(false) // Default to false since map requires API key
+  const [farmLocation, setFarmLocation] = useState<{lat: number, lng: number} | null>(null)
   const [livestock, setLivestock] = useState<Livestock>({
     cattle: 50,
     pigs: 30,
     chickens: 100
   })
 
-  // Convert listings to locations for the map
-  const locations = listings.map((listing) => ({
-    lat: listing.lat,
-    lng: listing.lng,
-    address: listing.address,
-    title: listing.storeName,
-  }))
+  // Get current farm's location
+  const getCurrentFarmLocation = async () => {
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      
+      if (authError) {
+        console.error('Auth error:', authError);
+        throw authError;
+      }
+      
+      if (!user) {
+        console.log('No user found');
+        toast.error("Please log in to view listings")
+        router.push('/login')
+        return null
+      }
 
-  // Default center (can be replaced with user's location)
-  const defaultCenter = {
-    lat: 40.7128,
-    lng: -74.006,
+      console.log('Fetching farm data for user:', user.id);
+
+      const { data: farmData, error: farmError } = await supabase
+        .from('Farms')
+        .select('*')  // Select all columns to see the address
+        .eq('id', user.id)
+        .single()
+
+      if (farmError) {
+        console.error('Farm fetch error:', farmError);
+        if (farmError.code === 'PGRST116') {
+          toast.error("Access denied. This account is not registered as a farm")
+          router.push('/login')
+          return null
+        }
+        throw farmError
+      }
+
+      console.log('Farm data:', farmData);
+
+      // If we don't have coordinates but have an address, get coordinates
+      if ((!farmData.lat || !farmData.lng) && farmData.address) {
+        console.log('No coordinates found, geocoding address:', farmData.address);
+        const coords = await geocodeAddress(farmData.address);
+        console.log('Geocoding result:', coords);
+
+        if (coords) {
+          // Update the farm with new coordinates
+          const { error: updateError } = await supabase
+            .from('Farms')
+            .update({ lat: coords.lat, lng: coords.lng })
+            .eq('id', user.id);
+
+          if (updateError) {
+            console.error('Error updating farm coordinates:', updateError);
+          } else {
+            console.log('Updated farm coordinates:', coords);
+            return coords;
+          }
+        }
+      }
+
+      // Return existing coordinates if we have them
+      if (farmData.lat && farmData.lng) {
+        console.log('Returning existing coordinates:', { lat: farmData.lat, lng: farmData.lng });
+        return { lat: farmData.lat, lng: farmData.lng };
+      }
+
+      console.log('No coordinates available for farm');
+      return null;
+    } catch (error) {
+      console.error('Error getting farm location:', error)
+      toast.error('Failed to get farm location')
+      return null
+    }
   }
 
-  // Mock data for demonstration
-  useEffect(() => {
-    const mockListings: Listing[] = [
-      {
-        id: 1,
-        storeName: "Fresh Market",
-        address: "123 Main St, Anytown, USA",
-        distance: 2.3,
-        feedType: "chicken",
-        quantity: "50 lbs",
-        price: "$15.00",
-        expiry: "Today",
-        lat: 40.7128,
-        lng: -74.006,
-      },
-      {
-        id: 2,
-        storeName: "Super Foods",
-        address: "456 Oak Ave, Somewhere, USA",
-        distance: 5.7,
-        feedType: "pig",
-        quantity: "30 lbs",
-        price: "$12.00",
-        expiry: "Tomorrow",
-        lat: 40.7228,
-        lng: -74.016,
-      },
-      {
-        id: 3,
-        storeName: "Value Grocery",
-        address: "789 Pine Rd, Elsewhere, USA",
-        distance: 8.2,
-        feedType: "cattle",
-        quantity: "75 lbs",
-        price: "$25.00",
-        expiry: "2 days",
-        lat: 40.7328,
-        lng: -73.996,
-      },
-      {
-        id: 4,
-        storeName: "City Market",
-        address: "101 Elm St, Nowhere, USA",
-        distance: 12.5,
-        feedType: "chicken",
-        quantity: "25 lbs",
-        price: "$8.00",
-        expiry: "Today",
-        lat: 40.7028,
-        lng: -74.026,
-      },
-      {
-        id: 5,
-        storeName: "Family Grocer",
-        address: "202 Maple Dr, Anyplace, USA",
-        distance: 15.8,
-        feedType: "pig",
-        quantity: "40 lbs",
-        price: "$18.00",
-        expiry: "Tomorrow",
-        lat: 40.7428,
-        lng: -74.036,
-      },
-    ]
+  // Fetch stores and their feed listings
+  const fetchListings = async () => {
+    try {
+      setLoading(true)
 
-    setListings(mockListings)
-  }, [])
+      // First get all stores
+      const { data: stores, error: storesError } = await supabase
+        .from('Stores')
+        .select('*')
+
+      if (storesError) {
+        console.error('Store fetch error:', storesError);
+        throw storesError;
+      }
+
+      console.log('Fetched stores:', stores);
+
+      // Then get all feed listings
+      const { data: feedListings, error: feedError } = await supabase
+        .from('Feed')
+        .select('*')
+
+      if (feedError) {
+        console.error('Feed fetch error:', feedError);
+        throw feedError;
+      }
+
+      console.log('Fetched feed listings:', feedListings);
+
+      // Get the farm's location
+      const farmLoc = await getCurrentFarmLocation()
+      if (!farmLoc) {
+        console.log('No farm location available');
+        return;
+      }
+      setFarmLocation(farmLoc)
+
+      // For stores without coordinates, geocode their addresses
+      const storesWithCoords = await Promise.all(stores.map(async (store) => {
+        if ((!store.lat || !store.lng) && store.address) {
+          console.log('Geocoding store address:', store.address);
+          const coords = await geocodeAddress(store.address);
+          if (coords) {
+            // Update store coordinates in database
+            const { error: updateError } = await supabase
+              .from('Stores')
+              .update({ lat: coords.lat, lng: coords.lng })
+              .eq('id', store.id);
+
+            if (updateError) {
+              console.error('Error updating store coordinates:', updateError);
+            } else {
+              console.log('Updated store coordinates:', coords);
+              return { ...store, ...coords };
+            }
+          }
+        }
+        return store;
+      }));
+
+      // Calculate distances and combine data
+      const listingsWithDistance = storesWithCoords.map((store) => {
+        const distance = store.lat && store.lng ? 
+          calculateHaversineDistance(farmLoc.lat, farmLoc.lng, store.lat, store.lng) : 
+          Number.MAX_VALUE;
+        
+        const storeFeed = feedListings.filter(feed => feed.store_id === store.id)
+        
+        return {
+          ...store,
+          feed: storeFeed,
+          distance
+        }
+      })
+
+      console.log('Listings with distances:', listingsWithDistance);
+
+      // Sort by distance and filter by max distance
+      const filteredListings = listingsWithDistance
+        .filter(listing => listing.distance <= distance[0])
+        .sort((a, b) => a.distance - b.distance)
+
+      console.log('Filtered listings:', filteredListings);
+      setListings(filteredListings)
+    } catch (error) {
+      console.error('Error fetching listings:', error)
+      toast.error('Failed to load listings')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Initialize data
+  useEffect(() => {
+    fetchListings()
+  }, [distance])
 
   // Filter listings based on feed type
-  const filteredListings = listings.filter((listing) => feedType === "all" || listing.feedType === feedType)
+  const filteredListings = listings.filter(listing => 
+    feedType === "all" || listing.feed.some(feed => feed.feed_type.toLowerCase() === feedType.toLowerCase())
+  )
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -203,9 +326,21 @@ export default function FarmerDashboard() {
             <TabsContent value="search" className="space-y-6">
               <div className="grid gap-6 md:grid-cols-[300px_1fr]">
                 <div className="space-y-6">
-                  {/* Gemini AI Recommendations */}
                   <FeedRecommendations livestock={livestock} />
-
+                  <div className="p-4 border rounded-md space-y-2">
+                    <h3 className="font-semibold">Debug Information:</h3>
+                    <p>Farm Location: {farmLocation ? `${farmLocation.lat}, ${farmLocation.lng}` : 'Not loaded'}</p>
+                    <p>Total Stores Found: {listings.length}</p>
+                    <p>Stores within {distance[0]} miles: {filteredListings.length}</p>
+                    <div className="text-sm">
+                      <p className="font-semibold mt-2">All Store Coordinates:</p>
+                      {listings.map((store, index) => (
+                        <div key={store.id} className="mt-1">
+                          {store.name}: {store.lat}, {store.lng} (Distance: {store.distance.toFixed(1)} mi)
+                        </div>
+                      ))}
+                    </div>
+                  </div>
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="feed-type">Feed Type</Label>
@@ -228,7 +363,7 @@ export default function FarmerDashboard() {
                         <Label htmlFor="distance">Distance (miles)</Label>
                         <span className="text-sm text-muted-foreground">{distance}mi</span>
                       </div>
-                      <Slider id="distance" max={50} step={1} value={distance} onValueChange={setDistance} />
+                      <Slider id="distance" max={5000} step={1} value={distance} onValueChange={setDistance} />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="price">Max Price</Label>
@@ -257,74 +392,70 @@ export default function FarmerDashboard() {
                     <div className="space-y-1">
                       <h2 className="text-2xl font-bold tracking-tight">Available Feed Listings</h2>
                       <p className="text-sm text-muted-foreground">
-                        Showing {filteredListings.length} listings within {distance} miles of your location
+                        {loading ? (
+                          "Loading listings..."
+                        ) : (
+                          `Showing ${filteredListings.length} listings within ${distance} miles of your location`
+                        )}
                       </p>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => setShowMap(!showMap)}>
-                        {showMap ? "Hide Map" : "Show Map"}
-                      </Button>
-                      <Select defaultValue="distance">
-                        <SelectTrigger className="w-[180px]">
-                          <SelectValue placeholder="Sort by" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="distance">Distance: Nearest</SelectItem>
-                          <SelectItem value="price-low">Price: Low to High</SelectItem>
-                          <SelectItem value="price-high">Price: High to Low</SelectItem>
-                          <SelectItem value="expiry">Expiry: Soonest</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
                   </div>
 
-                  {showMap && (
-                    <div className="w-full h-[300px] rounded-lg overflow-hidden border">
-                      <GoogleMap locations={locations} center={defaultCenter} />
+                  {loading ? (
+                    <div className="text-center py-8">Loading...</div>
+                  ) : filteredListings.length === 0 ? (
+                    <div className="text-center py-8">No listings found within the selected distance.</div>
+                  ) : (
+                    <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                      {filteredListings.map((listing) => (
+                        <Card key={listing.id}>
+                          <CardHeader className="pb-2">
+                            <div className="flex justify-between items-start">
+                              <CardTitle>{listing.name}</CardTitle>
+                              <Badge variant="outline" className="flex gap-1 items-center">
+                                <MapPin className="h-3 w-3" />
+                                {listing.distance.toFixed(1)} mi
+                              </Badge>
+                            </div>
+                            <CardDescription className="flex items-center gap-1">
+                              <MapPin className="h-3 w-3" />
+                              {listing.address}
+                            </CardDescription>
+                          </CardHeader>
+                          <CardContent className="pb-2">
+                            {listing.feed.length > 0 ? (
+                              <div className="grid grid-cols-2 gap-2 text-sm">
+                                <div className="flex items-center gap-1">
+                                  <Package className="h-4 w-4 text-muted-foreground" />
+                                  <span className="capitalize">{listing.feed[0].feed_type} Feed</span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+                                  <span>{listing.feed[0].amount} lbs</span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <Clock className="h-4 w-4 text-muted-foreground" />
+                                  <span>Available Now</span>
+                                </div>
+                                <div className="flex items-center gap-1 font-medium">
+                                  <span>Price: ${listing.feed[0].price.toFixed(2)}</span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-sm text-muted-foreground">
+                                No feed listings available
+                              </div>
+                            )}
+                          </CardContent>
+                          <CardFooter>
+                            <Button className="w-full" disabled={listing.feed.length === 0}>
+                              {listing.feed.length > 0 ? "Purchase" : "No Feed Available"}
+                            </Button>
+                          </CardFooter>
+                        </Card>
+                      ))}
                     </div>
                   )}
-
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                    {filteredListings.map((listing) => (
-                      <Card key={listing.id}>
-                        <CardHeader className="pb-2">
-                          <div className="flex justify-between items-start">
-                            <CardTitle>{listing.storeName}</CardTitle>
-                            <Badge variant="outline" className="flex gap-1 items-center">
-                              <MapPin className="h-3 w-3" />
-                              {listing.distance} mi
-                            </Badge>
-                          </div>
-                          <CardDescription className="flex items-center gap-1">
-                            <MapPin className="h-3 w-3" />
-                            {listing.address}
-                          </CardDescription>
-                        </CardHeader>
-                        <CardContent className="pb-2">
-                          <div className="grid grid-cols-2 gap-2 text-sm">
-                            <div className="flex items-center gap-1">
-                              <Package className="h-4 w-4 text-muted-foreground" />
-                              <span className="capitalize">{listing.feedType} Feed</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-                              <span>{listing.quantity}</span>
-                            </div>
-                            <div className="flex items-center gap-1">
-                              <Clock className="h-4 w-4 text-muted-foreground" />
-                              <span>Expires: {listing.expiry}</span>
-                            </div>
-                            <div className="flex items-center gap-1 font-medium">
-                              <span>Price: {listing.price}</span>
-                            </div>
-                          </div>
-                        </CardContent>
-                        <CardFooter>
-                          <Button className="w-full">Purchase</Button>
-                        </CardFooter>
-                      </Card>
-                    ))}
-                  </div>
                 </div>
               </div>
             </TabsContent>
