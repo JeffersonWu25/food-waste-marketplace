@@ -19,6 +19,7 @@ import { FeedRecommendations } from "@/components/feed-recommendations"
 import { supabase } from "@/lib/supabase"
 import { geocodeAddress } from "@/lib/geocoding"
 import { toast } from "sonner"
+import { FeedDetailsModal } from "@/components/feed-details-modal"
 
 interface Store {
   id: string
@@ -78,6 +79,20 @@ export default function FarmerDashboard() {
     pigs: 30,
     chickens: 100
   })
+  const [selectedFeed, setSelectedFeed] = useState<{
+    feed: Feed;
+    storeName: string;
+    storeAddress: string;
+  } | null>(null);
+  const [orders, setOrders] = useState<{
+    id: string;
+    store_name: string;
+    feed_type: string;
+    amount: number;
+    total_price: number;
+    status: string;
+    purchase_date: string;
+  }[]>([])
 
   // Get current farm's location
   const getCurrentFarmLocation = async () => {
@@ -262,6 +277,47 @@ export default function FarmerDashboard() {
     // Only include listings that have at least one matching feed after filtering
     return listing.feed.length > 0 && listing.distance <= distance[0];
   });
+
+  // Fetch orders
+  const fetchOrders = async () => {
+    try {
+      const { data: ordersData, error: ordersError } = await supabase
+        .from('Purchases')
+        .select(`
+          *,
+          Stores (name),
+          Feed (feed_type)
+        `)
+        .order('purchase_date', { ascending: false })
+
+      if (ordersError) {
+        console.error('Order fetch error:', ordersError);
+        throw ordersError;
+      }
+
+      console.log('Fetched orders:', ordersData);
+
+      const formattedOrders = ordersData.map(order => ({
+        id: order.id,
+        store_name: order.Stores?.name || 'Unknown Store',
+        feed_type: order.Feed?.feed_type || 'Unknown Feed',
+        amount: order.amount,
+        total_price: order.total_price,
+        status: order.status,
+        purchase_date: order.purchase_date
+      }));
+
+      setOrders(formattedOrders);
+    } catch (error) {
+      console.error('Error fetching orders:', error)
+      toast.error('Failed to load orders')
+    }
+  }
+
+  // Initialize data
+  useEffect(() => {
+    fetchOrders()
+  }, [])
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -457,6 +513,16 @@ export default function FarmerDashboard() {
                                     <div className="flex items-center gap-1 font-medium">
                                       <span>Price: ${typeof feed.price === 'number' ? feed.price.toFixed(2) : 'Contact store'}</span>
                                     </div>
+                                    <Button 
+                                      className="col-span-2 mt-2" 
+                                      onClick={() => setSelectedFeed({
+                                        feed,
+                                        storeName: listing.name,
+                                        storeAddress: listing.address
+                                      })}
+                                    >
+                                      Purchase
+                                    </Button>
                                   </div>
                                 ))}
                               </div>
@@ -466,11 +532,6 @@ export default function FarmerDashboard() {
                               </div>
                             )}
                           </CardContent>
-                          <CardFooter>
-                            <Button className="w-full" disabled={listing.feed.length === 0}>
-                              {listing.feed.length > 0 ? "View Details" : "No Feed Available"}
-                            </Button>
-                          </CardFooter>
                         </Card>
                       ))}
                     </div>
@@ -491,15 +552,56 @@ export default function FarmerDashboard() {
                 </div>
 
                 <div className="rounded-md border">
-                  <div className="p-4 text-center text-muted-foreground">
-                    You don't have any orders yet. Start by purchasing feed from available listings.
-                  </div>
+                  {loading ? (
+                    <div className="p-4 text-center text-muted-foreground">
+                      Loading your orders...
+                    </div>
+                  ) : (
+                    <div className="divide-y">
+                      {orders?.length > 0 ? (
+                        orders.map((order) => (
+                          <div key={order.id} className="p-4">
+                            <div className="grid gap-1">
+                              <div className="flex items-center justify-between">
+                                <div className="font-semibold">{order.store_name}</div>
+                                <Badge variant={order.status === 'pending' ? 'outline' : 'default'}>
+                                  {order.status}
+                                </Badge>
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {order.feed_type} - {order.amount} lbs
+                              </div>
+                              <div className="text-sm">
+                                Total: ${order.total_price.toFixed(2)}
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                Purchased on {new Date(order.purchase_date).toLocaleDateString()}
+                              </div>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-4 text-center text-muted-foreground">
+                          You don't have any orders yet. Start by purchasing feed from available listings.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </TabsContent>
           </Tabs>
         </main>
       </div>
+      {selectedFeed && (
+        <FeedDetailsModal
+          isOpen={!!selectedFeed}
+          onClose={() => setSelectedFeed(null)}
+          feed={selectedFeed.feed}
+          storeName={selectedFeed.storeName}
+          storeAddress={selectedFeed.storeAddress}
+        />
+      )}
     </div>
   )
 }
