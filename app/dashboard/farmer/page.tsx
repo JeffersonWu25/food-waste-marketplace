@@ -70,7 +70,8 @@ export default function FarmerDashboard() {
   const [loading, setLoading] = useState(true)
   const [distance, setDistance] = useState([25])
   const [feedType, setFeedType] = useState("all")
-  const [showMap, setShowMap] = useState(false) // Default to false since map requires API key
+  const [maxPrice, setMaxPrice] = useState<number | "any">("any")
+  const [showMap, setShowMap] = useState(false)
   const [farmLocation, setFarmLocation] = useState<{lat: number, lng: number} | null>(null)
   const [livestock, setLivestock] = useState<Livestock>({
     cattle: 50,
@@ -249,10 +250,18 @@ export default function FarmerDashboard() {
     fetchListings()
   }, [distance])
 
-  // Filter listings based on feed type
-  const filteredListings = listings.filter(listing => 
-    feedType === "all" || listing.feed.some(feed => feed.feed_type.toLowerCase() === feedType.toLowerCase())
-  )
+  // Filter listings based on feed type and price
+  const filteredListings = listings.map(listing => ({
+    ...listing,
+    feed: listing.feed.filter(feed => {
+      const matchesType = feedType === "all" || feed.feed_type.toLowerCase() === feedType.toLowerCase();
+      const matchesPrice = maxPrice === "any" || (typeof feed.price === 'number' && feed.price <= Number(maxPrice));
+      return matchesType && matchesPrice;
+    })
+  })).filter(listing => {
+    // Only include listings that have at least one matching feed after filtering
+    return listing.feed.length > 0 && listing.distance <= distance[0];
+  });
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -353,24 +362,19 @@ export default function FarmerDashboard() {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="price">Max Price</Label>
-                      <Select defaultValue="any">
+                      <Select value={maxPrice.toString()} onValueChange={(value) => setMaxPrice(value === "any" ? "any" : Number(value))}>
                         <SelectTrigger id="price">
                           <SelectValue placeholder="Select price range" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="any">Any Price</SelectItem>
+                          <SelectItem value="5">Under $5</SelectItem>
                           <SelectItem value="10">Under $10</SelectItem>
-                          <SelectItem value="25">Under $25</SelectItem>
+                          <SelectItem value="30">Under $30</SelectItem>
                           <SelectItem value="50">Under $50</SelectItem>
-                          <SelectItem value="100">Under $100</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <Switch id="available-now" />
-                      <Label htmlFor="available-now">Available for pickup now</Label>
-                    </div>
-                    <Button className="w-full">Apply Filters</Button>
                   </div>
                 </div>
                 <div className="space-y-6">
@@ -435,22 +439,26 @@ export default function FarmerDashboard() {
                           </CardHeader>
                           <CardContent className="pb-2">
                             {listing.feed.length > 0 ? (
-                              <div className="grid grid-cols-2 gap-2 text-sm">
-                                <div className="flex items-center gap-1">
-                                  <Package className="h-4 w-4 text-muted-foreground" />
-                                  <span className="capitalize">{listing.feed[0].feed_type} Feed</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-                                  <span>{listing.feed[0].amount} lbs</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <Clock className="h-4 w-4 text-muted-foreground" />
-                                  <span>Available Now</span>
-                                </div>
-                                <div className="flex items-center gap-1 font-medium">
-                                  <span>Price: ${listing.feed[0].price.toFixed(2)}</span>
-                                </div>
+                              <div className="space-y-2">
+                                {listing.feed.map((feed, index) => (
+                                  <div key={feed.id} className={`grid grid-cols-2 gap-2 text-sm ${index > 0 ? 'pt-2 border-t' : ''}`}>
+                                    <div className="flex items-center gap-1">
+                                      <Package className="h-4 w-4 text-muted-foreground" />
+                                      <span className="capitalize">{feed.feed_type || 'Unknown'} Feed</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+                                      <span>{feed.amount ? `${feed.amount} lbs` : 'Amount not specified'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <Clock className="h-4 w-4 text-muted-foreground" />
+                                      <span>Available Now</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 font-medium">
+                                      <span>Price: ${typeof feed.price === 'number' ? feed.price.toFixed(2) : 'Contact store'}</span>
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
                             ) : (
                               <div className="text-sm text-muted-foreground">
@@ -460,7 +468,7 @@ export default function FarmerDashboard() {
                           </CardContent>
                           <CardFooter>
                             <Button className="w-full" disabled={listing.feed.length === 0}>
-                              {listing.feed.length > 0 ? "Purchase" : "No Feed Available"}
+                              {listing.feed.length > 0 ? "View Details" : "No Feed Available"}
                             </Button>
                           </CardFooter>
                         </Card>
