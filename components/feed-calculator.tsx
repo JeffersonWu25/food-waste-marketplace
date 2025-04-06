@@ -213,6 +213,16 @@ export function FeedCalculator() {
         return
       }
 
+      // Get the selected ingredients details
+      const selectedIngredientDetails = ingredients.filter(ing =>
+        selectedItems.includes(ing.id)
+      ).map(ing => ({
+        id: ing.id,
+        name: ing.name,
+        amount: ing.amount,
+        type: ing.type
+      }))
+
       // Create listings from calculated feed amounts
       const listings = Object.entries(calculatedFeed)
         .filter(([_, amount]) => amount > 0)
@@ -220,7 +230,8 @@ export function FeedCalculator() {
           store_id: user.id,
           feed_type: feedType,
           amount: amount,
-          price: parseFloat(listingPrices[feedType as keyof typeof listingPrices] || '0')
+          price: parseFloat(listingPrices[feedType as keyof typeof listingPrices] || '0'),
+          ingredients: selectedIngredientDetails // Add the ingredients array
         }));
 
       // Insert listings into Feed table
@@ -514,20 +525,30 @@ export function FeedCalculator() {
           <DialogHeader>
             <DialogTitle>Feed Calculation Results</DialogTitle>
             <DialogDescription>
-              Here are the calculated feed amounts that can be produced:
+              {Object.values(calculatedFeed).every(amount => amount === 0)
+                ? "Based on the selected ingredients, no safe animal feed can be produced. This may be due to food safety regulations or nutritional requirements."
+                : "Here are the calculated feed amounts that can be produced:"}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
-            <div className="grid grid-cols-2 gap-4">
-              {Object.entries(calculatedFeed).map(([type, amount]) => (
-                amount > 0 && (
-                  <div key={type} className="flex flex-col p-3 border rounded-lg">
-                    <span className="text-sm text-muted-foreground capitalize">{type} Feed</span>
-                    <span className="text-lg font-semibold">{amount} lbs</span>
-                  </div>
-                )
-              ))}
-            </div>
+            {Object.values(calculatedFeed).every(amount => amount === 0) ? (
+              <div className="p-4 border rounded-lg bg-muted">
+                <p className="text-sm text-muted-foreground">
+                  Consider selecting different ingredients or consulting local regulations for guidance on acceptable feed ingredients.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                {Object.entries(calculatedFeed).map(([type, amount]) => (
+                  amount > 0 && (
+                    <div key={type} className="flex flex-col p-3 border rounded-lg">
+                      <span className="text-sm text-muted-foreground capitalize">{type} Feed</span>
+                      <span className="text-lg font-semibold">{amount} lbs</span>
+                    </div>
+                  )
+                ))}
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button onClick={() => setShowResultsDialog(false)}>
