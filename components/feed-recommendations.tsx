@@ -7,9 +7,11 @@ import { toast } from "sonner"
 import { useRouter } from "next/navigation"
 
 interface Livestock {
+  id: string
   animal_type: string
   count: number
   weekly_feed_required: number
+  farm_id: string
 }
 
 interface Feed {
@@ -21,6 +23,11 @@ interface Feed {
 
 interface FeedRecommendationsProps {
   farmId?: string
+}
+
+interface LivestockTypeData {
+  count: number
+  weekly_feed_required: number
 }
 
 export function FeedRecommendations({ farmId }: FeedRecommendationsProps) {
@@ -106,21 +113,60 @@ export function FeedRecommendations({ farmId }: FeedRecommendationsProps) {
 
         // Calculate feed requirements
         const requirements: typeof feedRequirements = {}
-        livestockData?.forEach(animal => {
-          const totalRequired = animal.weekly_feed_required * animal.count
-          const available = feedData?.find(f =>
-            f.feed_type.toLowerCase() === animal.animal_type.toLowerCase()
-          )?.amount || 0
-          const needed = Math.max(0, totalRequired - available)
-          const percentage = Math.min(100, (available / totalRequired) * 100)
+        
+        if (livestockData && livestockData.length > 0) {
+          // Group livestock by animal type
+          const livestockByType: Record<string, LivestockTypeData> = {}
+          
+          // First, initialize the data structure
+          livestockData.forEach(animal => {
+            const type = animal.animal_type.toLowerCase()
+            if (!livestockByType[type]) {
+              livestockByType[type] = {
+                count: 0,
+                weekly_feed_required: 0
+              }
+            }
+          })
+          
+          // Then, populate with data
+          livestockData.forEach(animal => {
+            const type = animal.animal_type.toLowerCase()
+            livestockByType[type].count += animal.count
+            livestockByType[type].weekly_feed_required += animal.weekly_feed_required
+          })
 
-          requirements[animal.animal_type] = {
-            required: totalRequired,
-            available,
-            needed,
-            percentage
-          }
-        })
+          console.log("Grouped livestock by type:", livestockByType)
+
+          // Calculate requirements for each animal type
+          Object.keys(livestockByType).forEach(animalType => {
+            const data = livestockByType[animalType]
+            if (data.count > 0) {
+              const totalRequired = data.weekly_feed_required
+              const available = feedData?.filter(f => 
+                f.feed_type.toLowerCase() === animalType
+              ).reduce((sum, feed) => sum + feed.amount, 0) || 0
+              
+              const needed = Math.max(0, totalRequired - available)
+              const percentage = totalRequired > 0 ? Math.min(100, (available / totalRequired) * 100) : 0
+
+              console.log(`${animalType} requirements:`, {
+                count: data.count,
+                totalRequired,
+                available,
+                needed,
+                percentage
+              })
+
+              requirements[animalType] = {
+                required: totalRequired,
+                available,
+                needed,
+                percentage
+              }
+            }
+          })
+        }
 
         console.log("Calculated requirements:", requirements)
         setFeedRequirements(requirements)
@@ -162,6 +208,14 @@ export function FeedRecommendations({ farmId }: FeedRecommendationsProps) {
     )
   }
 
+  // Get livestock summary for display
+  const getLivestockSummary = () => {
+    return livestock
+      .filter(animal => animal.count > 0)
+      .map(animal => `${animal.count} ${animal.animal_type}`)
+      .join(', ')
+  }
+
   return (
     <div className="rounded-lg bg-blue-50 p-6 space-y-4">
       <div className="space-y-2">
@@ -171,10 +225,10 @@ export function FeedRecommendations({ farmId }: FeedRecommendationsProps) {
             <path d="M2 17L12 22L22 17" stroke="#1D4ED8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             <path d="M2 12L12 17L22 12" stroke="#1D4ED8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          <h2 className="text-2xl font-bold tracking-tight text-blue-600">Gemini Feed Recommendations</h2>
+          <h2 className="text-2xl font-bold tracking-tight text-blue-600">Feed Recommendations</h2>
         </div>
         <p className="text-sm text-gray-600">
-          Based on your livestock inventory and available feed
+          Based on your livestock inventory ({getLivestockSummary()})
         </p>
       </div>
 
@@ -185,13 +239,13 @@ export function FeedRecommendations({ farmId }: FeedRecommendationsProps) {
           {Object.entries(feedRequirements).map(([animalType, data]) => (
             <div key={animalType} className="space-y-2">
               <div className="flex justify-between">
-                <span className="font-medium">{animalType} Feed:</span>
+                <span className="font-medium capitalize">{animalType} Feed:</span>
                 <span className="font-medium">{data.required} lbs/week</span>
               </div>
               <div className="h-2 w-full bg-gray-200 rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full ${data.percentage >= 100 ? 'bg-green-500' :
-                      data.percentage >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+                    data.percentage >= 50 ? 'bg-yellow-500' : 'bg-red-500'
                     }`}
                   style={{ width: `${data.percentage}%` }}
                 ></div>
@@ -204,6 +258,9 @@ export function FeedRecommendations({ farmId }: FeedRecommendationsProps) {
           ))}
         </div>
 
+        <p className="text-blue-600 text-sm">
+          We've highlighted matching feed types in the listings below.
+        </p>
       </div>
     </div>
   )

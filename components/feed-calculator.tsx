@@ -20,44 +20,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 
-// Feed conversion rates (simplified for demonstration)
-const FEED_CONVERSION = {
-  produce: {
-    chicken: 0.8,
-    pig: 0.6,
-    cattle: 0.4,
-    goat: 0.7,
-    sheep: 0.6,
-  },
-  bakery: {
-    chicken: 0.5,
-    pig: 0.9,
-    cattle: 0.3,
-    goat: 0.4,
-    sheep: 0.4,
-  },
-  dairy: {
-    chicken: 0.3,
-    pig: 0.8,
-    cattle: 0.5,
-    goat: 0.6,
-    sheep: 0.5,
-  },
-  protein: {
-    chicken: 0.7,
-    pig: 0.9,
-    cattle: 0.6,
-    goat: 0.5,
-    sheep: 0.5,
-  },
-  other: {
-    chicken: 0.9,
-    pig: 0.7,
-    cattle: 0.5,
-    goat: 0.6,
-    sheep: 0.6,
-  },
-}
+// Feed conversion rates (simplified for demonstration
 
 interface Ingredient {
   id: number
@@ -129,10 +92,12 @@ export function FeedCalculator() {
       Your job is to take a list of expired or surplus ingredients and determine how many pounds of usable animal feed can be produced for chickens, pigs, cattle, and goats. Consider the following guidelines:
 
       1. Most fresh produce, grains, and bakery items are generally safe for animal feed
-      2. Dairy products are safe for pigs and cattle in moderate amounts
-      3. Meat and protein products should be avoided unless specifically processed for feed
-      4. Moldy or spoiled items should be excluded
-      5. Consider the nutritional value and digestibility of each ingredient
+      2. Dairy products are safe for pigs and cattle in moderate amounts but not chickens
+      3. Meat and protein products should be avoided unless specifically processed for feed, then its safe for only chickens
+      4. Items that are expired for more than 1 month should be excluded
+      5. Consider the nutritional value, safety and digestibility of each ingredient
+      6. Ensure that each feed is at least greater than 0 (as long as the farmer has the animal)
+      7. At all costs make sure that the sum of the 4 feed types is equal to the sum of the ingredients
 
       Format your response EXACTLY like this example:
       {

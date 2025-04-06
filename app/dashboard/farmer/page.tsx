@@ -75,9 +75,9 @@ export default function FarmerDashboard() {
   const [showMap, setShowMap] = useState(true)
   const [farmLocation, setFarmLocation] = useState<{lat: number, lng: number} | null>(null)
   const [livestock, setLivestock] = useState<Livestock>({
-    cattle: 50,
-    pigs: 30,
-    chickens: 100
+    cattle: 0,
+    pigs: 0,
+    chickens: 0
   })
   const [selectedFeed, setSelectedFeed] = useState<{
     feed: Feed;
@@ -97,6 +97,53 @@ export default function FarmerDashboard() {
   const [processingOrder, setProcessingOrder] = useState<string | null>(null);
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
   const [expandedFeed, setExpandedFeed] = useState<string | null>(null);
+
+  // Fetch livestock data
+  const fetchLivestock = async () => {
+    try {
+      const { data: { user }, error: authError } = await supabase.auth.getUser()
+      if (authError) throw authError
+      if (!user) {
+        toast.error('Please log in to view livestock')
+        router.push('/login')
+        return
+      }
+
+      const { data: livestockData, error: livestockError } = await supabase
+        .from('Livestock')
+        .select('animal_type, count')
+        .eq('farm_id', user.id)
+
+      if (livestockError) {
+        console.error('Livestock fetch error:', livestockError)
+        throw livestockError
+      }
+
+      // Convert the database format to our Livestock interface format
+      const formattedLivestock = livestockData.reduce((acc, curr) => {
+        const animalType = curr.animal_type.toLowerCase()
+        if (animalType in acc) {
+          acc[animalType as keyof Livestock] = curr.count
+        }
+        return acc
+      }, {
+        cattle: 0,
+        pigs: 0,
+        chickens: 0
+      } as Livestock)
+
+      console.log('Fetched livestock:', formattedLivestock)
+      setLivestock(formattedLivestock)
+    } catch (error) {
+      console.error('Error fetching livestock:', error)
+      toast.error('Failed to load livestock data')
+    }
+  }
+
+  // Add useEffect to fetch livestock data
+  useEffect(() => {
+    fetchLivestock()
+  }, [])
 
   // Get current farm's location
   const getCurrentFarmLocation = async () => {
@@ -119,7 +166,7 @@ export default function FarmerDashboard() {
 
       const { data: farmData, error: farmError } = await supabase
         .from('Farms')
-        .select('*')  // Select all columns to see the address
+        .select('*')
         .eq('id', user.id)
         .single()
 
@@ -135,17 +182,20 @@ export default function FarmerDashboard() {
 
       console.log('Farm data:', farmData);
 
-      // If we don't have coordinates but have an address, get coordinates
-      if ((!farmData.lat || !farmData.lng) && farmData.address) {
-        console.log('No coordinates found, geocoding address:', farmData.address);
+      // Always re-geocode the address to ensure accuracy
+      if (farmData.address) {
+        console.log('Geocoding farm address:', farmData.address);
         const coords = await geocodeAddress(farmData.address);
-        console.log('Geocoding result:', coords);
+        console.log('Farm geocoding result:', coords);
 
         if (coords) {
           // Update the farm with new coordinates
           const { error: updateError } = await supabase
             .from('Farms')
-            .update({ lat: coords.lat, lng: coords.lng })
+            .update({ 
+              lat: coords.lat, 
+              lng: coords.lng 
+            })
             .eq('id', user.id);
 
           if (updateError) {
@@ -157,10 +207,14 @@ export default function FarmerDashboard() {
         }
       }
 
-      // Return existing coordinates if we have them
+      // Return existing coordinates if geocoding failed
       if (farmData.lat && farmData.lng) {
-        console.log('Returning existing coordinates:', { lat: farmData.lat, lng: farmData.lng });
-        return { lat: farmData.lat, lng: farmData.lng };
+        const coords = {
+          lat: typeof farmData.lat === 'string' ? parseFloat(farmData.lat) : farmData.lat,
+          lng: typeof farmData.lng === 'string' ? parseFloat(farmData.lng) : farmData.lng
+        };
+        console.log('Using existing farm coordinates:', coords);
+        return coords;
       }
 
       console.log('No coordinates available for farm');
@@ -183,6 +237,12 @@ export default function FarmerDashboard() {
         console.log('No farm location available');
         return;
       }
+      
+      // Ensure coordinates are numbers
+      farmLoc.lat = typeof farmLoc.lat === 'string' ? parseFloat(farmLoc.lat) : farmLoc.lat;
+      farmLoc.lng = typeof farmLoc.lng === 'string' ? parseFloat(farmLoc.lng) : farmLoc.lng;
+      
+      console.log('Farm location:', farmLoc);
       setFarmLocation(farmLoc)
 
       // Then get all stores
@@ -197,9 +257,9 @@ export default function FarmerDashboard() {
 
       console.log('Fetched stores:', stores);
 
-      // For stores without coordinates, geocode their addresses
+      // Always re-geocode store addresses to ensure accuracy
       const storesWithCoords = await Promise.all(stores.map(async (store) => {
-        if ((!store.lat || !store.lng) && store.address) {
+        if (store.address) {
           console.log('Geocoding store address:', store.address);
           const coords = await geocodeAddress(store.address);
           if (coords) {
@@ -216,10 +276,20 @@ export default function FarmerDashboard() {
               console.error('Error updating store coordinates:', updateError);
             } else {
               console.log('Updated store coordinates:', coords);
-              return { ...store, lat: coords.lat, lng: coords.lng };
+              return { ...store, ...coords };
             }
           }
         }
+        
+        // Return existing coordinates if geocoding failed
+        if (store.lat && store.lng) {
+          return {
+            ...store,
+            lat: typeof store.lat === 'string' ? parseFloat(store.lat) : store.lat,
+            lng: typeof store.lng === 'string' ? parseFloat(store.lng) : store.lng
+          };
+        }
+        
         return store;
       }));
 
@@ -233,11 +303,19 @@ export default function FarmerDashboard() {
         throw feedError;
       }
 
-      console.log('DEBUG - Raw Feed table rows:', JSON.stringify(feedListings, null, 2));
-
       // Calculate distances and combine data
       const listingsWithDistance = storesWithCoords
-        .filter(store => store.lat && store.lng) // Only include stores with valid coordinates
+        .filter(store => {
+          // Only include stores with valid coordinates
+          const hasValidCoords = store.lat && store.lng && 
+            !isNaN(store.lat) && !isNaN(store.lng) &&
+            Math.abs(store.lat) <= 90 && Math.abs(store.lng) <= 180;
+          
+          if (!hasValidCoords) {
+            console.log('Store with invalid coordinates:', store);
+          }
+          return hasValidCoords;
+        })
         .map((store) => {
           const distance = calculateHaversineDistance(
             farmLoc.lat, 
@@ -588,7 +666,7 @@ export default function FarmerDashboard() {
             <TabsContent value="search" className="space-y-6">
               <div className="grid gap-6 md:grid-cols-[300px_1fr]">
                 <div className="space-y-6">
-                  <FeedRecommendations livestock={livestock} />
+                  <FeedRecommendations />
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="feed-type">Feed Type</Label>
@@ -611,7 +689,7 @@ export default function FarmerDashboard() {
                         <Label htmlFor="distance">Distance (miles)</Label>
                         <span className="text-sm text-muted-foreground">{distance}mi</span>
                       </div>
-                      <Slider id="distance" max={5000} step={1} value={distance} onValueChange={setDistance} />
+                      <Slider id="distance" max={500} step={1} value={distance} onValueChange={setDistance} />
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="price">Max Price</Label>
@@ -656,14 +734,17 @@ export default function FarmerDashboard() {
                     <div className="h-[400px] rounded-lg border">
                       <GoogleMap
                         center={farmLocation}
+                        zoom={10}
                         locations={[
                           { ...farmLocation, title: "Your Farm" },
-                          ...filteredListings.map(store => ({
-                            lat: store.lat!,
-                            lng: store.lng!,
-                            title: store.name,
-                            address: store.address
-                          }))
+                          ...filteredListings
+                            .filter(store => store.lat && store.lng && !isNaN(store.lat) && !isNaN(store.lng))
+                            .map(store => ({
+                              lat: store.lat!,
+                              lng: store.lng!,
+                              title: store.name,
+                              address: store.address
+                            }))
                         ]}
                       />
                     </div>

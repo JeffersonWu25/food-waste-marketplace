@@ -52,15 +52,34 @@ export function GoogleMap({
 
         // Create markers for each location
         const newMarkers = locations.map((location) => {
+          // Create custom marker icon for farm location
+          const isFarm = location.title === "Your Farm";
+          const markerIcon = isFarm ? {
+            path: google.maps.SymbolPath.CIRCLE,
+            fillColor: '#03396c', // Tailwind blue-600
+            fillOpacity: 1,
+            strokeColor: '#aaaaaa', // Tailwind blue-800
+            strokeWeight: 2,
+            scale: 13,
+          } : undefined;
+
           const marker = new google.maps.Marker({
             position: location,
             map,
             title: location.title || location.address,
+            icon: markerIcon,
+            label: isFarm ? {
+              text: "Farm",
+              color: "#b3cde0",
+              fontSize: "10px",
+              fontWeight: "bold"
+            } : undefined
           })
 
           if (onMarkerClick) {
             marker.addListener("click", () => onMarkerClick(location))
           }
+
 
           return marker
         })
