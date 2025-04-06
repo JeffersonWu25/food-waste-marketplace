@@ -16,7 +16,7 @@ import { toast } from "sonner"
 export default function SignupPage() {
   const router = useRouter()
   const searchParams = useSearchParams()
-  const defaultType = searchParams.get("type") || "farmer"
+  const defaultType = searchParams.get("type") || "store"
 
   const [userType, setUserType] = useState(defaultType)
   const [email, setEmail] = useState("")
@@ -30,57 +30,91 @@ export default function SignupPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
+    // Basic validation
+    if (!name || !email || !phone || !address || !password || !confirmPassword) {
+      toast.error("Please fill in all fields")
+      return
+    }
+
     if (password !== confirmPassword) {
       toast.error("Passwords do not match")
       return
     }
 
+    if (password.length < 6) {
+      toast.error("Password must be at least 6 characters long")
+      return
+    }
+
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(email)) {
+      toast.error("Please enter a valid email address")
+      return
+    }
+
+    // Trim whitespace from all fields
+    const trimmedEmail = email.trim()
+    const trimmedName = name.trim()
+    const trimmedPhone = phone.trim()
+    const trimmedAddress = address.trim()
+
     setIsLoading(true)
     try {
       // Sign up with Supabase
       const { data: authData, error: authError } = await supabase.auth.signUp({
-        email,
+        email: trimmedEmail,
         password,
         options: {
           data: {
             user_type: userType,
-            name,
-            address,
-            phone
+            name: trimmedName,
+            address: trimmedAddress,
+            phone: trimmedPhone
           }
         }
       })
 
-      if (authError) throw authError
+      if (authError) {
+        if (authError.message.includes("Email address is invalid")) {
+          toast.error("Please enter a valid email address")
+        } else if (authError.message.includes("already registered")) {
+          toast.error("An account with this email already exists")
+        } else {
+          toast.error(authError.message)
+        }
+        return
+      }
 
-      // Insert additional user data into the profiles table
-      const { error: profileError } = await supabase
-        .from('profiles')
+      if (!authData.user) {
+        toast.error("Failed to create user account")
+        return
+      }
+
+      // Create entry in appropriate table based on user type
+      const tableName = userType === 'store' ? 'Stores' : 'Farms'
+      const { error: tableError } = await supabase
+        .from(tableName)
         .insert([
           {
-            id: authData.user?.id,
-            user_type: userType,
-            name,
-            address,
-            phone,
-            email
+            id: authData.user.id,
+            name: trimmedName,
+            phone: trimmedPhone,
+            email: trimmedEmail,
+            address: trimmedAddress
           }
         ])
 
-      if (profileError) throw profileError
+      if (tableError) {
+        toast.error(`Failed to create ${userType} entry`)
+        return
+      }
 
       toast.success("Account created successfully! Please check your email to verify your account.")
       router.push("/login")
-    } catch (error: any) {
+    } catch (error) {
       console.error("Signup error:", error)
-      // Show more detailed error message
-      if (error.message) {
-        toast.error(error.message)
-      } else if (error.error_description) {
-        toast.error(error.error_description)
-      } else {
-        toast.error("Failed to create account. Please try again.")
-      }
+      toast.error("An unexpected error occurred")
     } finally {
       setIsLoading(false)
     }
@@ -102,18 +136,23 @@ export default function SignupPage() {
               <Label>I am a:</Label>
               <RadioGroup defaultValue={userType} onValueChange={setUserType} className="flex">
                 <div className="flex items-center space-x-2 mr-4">
-                  <RadioGroupItem value="farmer" id="farmer" />
-                  <Label htmlFor="farmer">Farmer</Label>
-                </div>
-                <div className="flex items-center space-x-2">
                   <RadioGroupItem value="store" id="store" />
                   <Label htmlFor="store">Grocery Store</Label>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <RadioGroupItem value="farmer" id="farmer" />
+                  <Label htmlFor="farmer">Farmer</Label>
                 </div>
               </RadioGroup>
             </div>
             <div className="space-y-2">
               <Label htmlFor="name">{userType === "farmer" ? "Farm Name" : "Store Name"}</Label>
-              <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
+              <Input
+                id="name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
             </div>
             <div className="space-y-2">
               <Label htmlFor="email">Email</Label>
