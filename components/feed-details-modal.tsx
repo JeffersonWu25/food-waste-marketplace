@@ -14,16 +14,7 @@ interface Feed {
   feed_type: string
   amount: number
   price: number
-}
-
-interface Ingredient {
-  id: string
-  store_id: string
-  name: string
-  amount: number
-  type: string
-  expiration_date: string
-  status: string
+  ingredients?: string
 }
 
 interface FeedDetailsModalProps {
@@ -43,35 +34,7 @@ export function FeedDetailsModal({
   storeAddress,
   onPurchaseComplete
 }: FeedDetailsModalProps) {
-  const [ingredients, setIngredients] = useState<Ingredient[]>([])
-  const [loading, setLoading] = useState(true)
   const [purchasing, setPurchasing] = useState(false)
-
-  // Fetch ingredients when modal opens
-  useEffect(() => {
-    async function fetchIngredients() {
-      try {
-        const { data, error } = await supabase
-          .from('Ingredients')
-          .select('*')
-          .eq('store_id', feed.store_id)
-          .eq('type', feed.feed_type.toLowerCase())
-
-        if (error) throw error
-        setIngredients(data || [])
-      } catch (error) {
-        console.error('Error fetching ingredients:', error)
-        toast.error('Failed to load ingredients')
-      } finally {
-        setLoading(false)
-      }
-    }
-
-    if (isOpen) {
-      setLoading(true)
-      fetchIngredients()
-    }
-  }, [isOpen, feed.store_id, feed.feed_type])
 
   const handlePurchase = async () => {
     try {
@@ -183,25 +146,9 @@ export function FeedDetailsModal({
 
           <div className="space-y-2">
             <h4 className="font-medium">Ingredients:</h4>
-            {loading ? (
-              <div className="text-center py-4">Loading ingredients...</div>
-            ) : ingredients.length > 0 ? (
-              <div className="border rounded-lg divide-y">
-                {ingredients.map((ingredient) => (
-                  <div key={ingredient.id} className="p-3 flex items-center justify-between">
-                    <div>
-                      <p className="font-medium">{ingredient.name}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {ingredient.amount} lbs - Expires: {new Date(ingredient.expiration_date).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <Badge>{ingredient.status}</Badge>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">No ingredients information available</p>
-            )}
+            <p className="text-sm text-muted-foreground">
+              {feed.ingredients || 'No ingredients information available'}
+            </p>
           </div>
         </div>
 

@@ -72,7 +72,7 @@ export default function FarmerDashboard() {
   const [distance, setDistance] = useState([25])
   const [feedType, setFeedType] = useState("all")
   const [maxPrice, setMaxPrice] = useState<number | "any">("any")
-  const [showMap, setShowMap] = useState(false)
+  const [showMap, setShowMap] = useState(true)
   const [farmLocation, setFarmLocation] = useState<{lat: number, lng: number} | null>(null)
   const [livestock, setLivestock] = useState<Livestock>({
     cattle: 50,
@@ -92,8 +92,11 @@ export default function FarmerDashboard() {
     total_price: number;
     status: string;
     purchase_date: string;
+    ingredients: string;
   }[]>([])
   const [processingOrder, setProcessingOrder] = useState<string | null>(null);
+  const [expandedOrder, setExpandedOrder] = useState<string | null>(null);
+  const [expandedFeed, setExpandedFeed] = useState<string | null>(null);
 
   // Get current farm's location
   const getCurrentFarmLocation = async () => {
@@ -174,7 +177,15 @@ export default function FarmerDashboard() {
     try {
       setLoading(true)
 
-      // First get all stores
+      // Get the farm's location first
+      const farmLoc = await getCurrentFarmLocation()
+      if (!farmLoc) {
+        console.log('No farm location available');
+        return;
+      }
+      setFarmLocation(farmLoc)
+
+      // Then get all stores
       const { data: stores, error: storesError } = await supabase
         .from('Stores')
         .select('*')
@@ -186,6 +197,32 @@ export default function FarmerDashboard() {
 
       console.log('Fetched stores:', stores);
 
+      // For stores without coordinates, geocode their addresses
+      const storesWithCoords = await Promise.all(stores.map(async (store) => {
+        if ((!store.lat || !store.lng) && store.address) {
+          console.log('Geocoding store address:', store.address);
+          const coords = await geocodeAddress(store.address);
+          if (coords) {
+            // Update store coordinates in database
+            const { error: updateError } = await supabase
+              .from('Stores')
+              .update({ 
+                lat: coords.lat, 
+                lng: coords.lng 
+              })
+              .eq('id', store.id);
+
+            if (updateError) {
+              console.error('Error updating store coordinates:', updateError);
+            } else {
+              console.log('Updated store coordinates:', coords);
+              return { ...store, lat: coords.lat, lng: coords.lng };
+            }
+          }
+        }
+        return store;
+      }));
+
       // Then get all feed listings
       const { data: feedListings, error: feedError } = await supabase
         .from('Feed')
@@ -196,53 +233,27 @@ export default function FarmerDashboard() {
         throw feedError;
       }
 
-      console.log('Fetched feed listings:', feedListings);
-
-      // Get the farm's location
-      const farmLoc = await getCurrentFarmLocation()
-      if (!farmLoc) {
-        console.log('No farm location available');
-        return;
-      }
-      setFarmLocation(farmLoc)
-
-      // For stores without coordinates, geocode their addresses
-      const storesWithCoords = await Promise.all(stores.map(async (store) => {
-        if ((!store.lat || !store.lng) && store.address) {
-          console.log('Geocoding store address:', store.address);
-          const coords = await geocodeAddress(store.address);
-          if (coords) {
-            // Update store coordinates in database
-            const { error: updateError } = await supabase
-              .from('Stores')
-              .update({ lat: coords.lat, lng: coords.lng })
-              .eq('id', store.id);
-
-            if (updateError) {
-              console.error('Error updating store coordinates:', updateError);
-            } else {
-              console.log('Updated store coordinates:', coords);
-              return { ...store, ...coords };
-            }
-          }
-        }
-        return store;
-      }));
+      console.log('DEBUG - Raw Feed table rows:', JSON.stringify(feedListings, null, 2));
 
       // Calculate distances and combine data
-      const listingsWithDistance = storesWithCoords.map((store) => {
-        const distance = store.lat && store.lng ? 
-          calculateHaversineDistance(farmLoc.lat, farmLoc.lng, store.lat, store.lng) : 
-          Number.MAX_VALUE;
-        
-        const storeFeed = feedListings.filter(feed => feed.store_id === store.id)
-        
-        return {
-          ...store,
-          feed: storeFeed,
-          distance
-        }
-      })
+      const listingsWithDistance = storesWithCoords
+        .filter(store => store.lat && store.lng) // Only include stores with valid coordinates
+        .map((store) => {
+          const distance = calculateHaversineDistance(
+            farmLoc.lat, 
+            farmLoc.lng, 
+            store.lat!, 
+            store.lng!
+          );
+          
+          const storeFeed = feedListings.filter(feed => feed.store_id === store.id)
+          
+          return {
+            ...store,
+            feed: storeFeed,
+            distance
+          }
+        });
 
       console.log('Listings with distances:', listingsWithDistance);
 
@@ -261,10 +272,22 @@ export default function FarmerDashboard() {
     }
   }
 
-  // Initialize data
+  // Initialize data and refresh when distance changes
   useEffect(() => {
     fetchListings()
   }, [distance])
+
+  // Add a refresh effect when the component mounts and periodically
+  useEffect(() => {
+    // Initial fetch
+    fetchListings()
+
+    // Set up periodic refresh every 5 minutes
+    const intervalId = setInterval(fetchListings, 5 * 60 * 1000)
+
+    // Cleanup on unmount
+    return () => clearInterval(intervalId)
+  }, [])
 
   // Filter listings based on feed type and price
   const filteredListings = listings.map(listing => ({
@@ -282,12 +305,26 @@ export default function FarmerDashboard() {
   // Fetch orders
   const fetchOrders = async () => {
     try {
+      // First, let's directly query the Feed table to see what's in it
+      const { data: allFeeds, error: feedError } = await supabase
+        .from('Feed')
+        .select('*')
+      
+      console.log('DEBUG - All Feed table rows:', JSON.stringify(allFeeds, null, 2));
+
       const { data: ordersData, error: ordersError } = await supabase
         .from('Purchases')
         .select(`
           *,
-          Stores (name),
-          Feed (feed_type)
+          Stores (
+            name
+          ),
+          Feed!inner (
+            id,
+            feed_type,
+            ingredients,
+            amount
+          )
         `)
         .order('purchase_date', { ascending: false })
 
@@ -296,18 +333,26 @@ export default function FarmerDashboard() {
         throw ordersError;
       }
 
-      console.log('Fetched orders:', ordersData);
+      console.log('DEBUG - Orders with Feed data:', JSON.stringify(ordersData, null, 2));
 
-      const formattedOrders = ordersData.map(order => ({
-        id: order.id,
-        store_name: order.Stores?.name || 'Unknown Store',
-        feed_type: order.Feed?.feed_type || 'Unknown Feed',
-        amount: order.amount,
-        total_price: order.total_price,
-        status: order.status,
-        purchase_date: order.purchase_date
-      }));
+      const formattedOrders = ordersData.map(order => {
+        console.log('DEBUG - Processing order with Feed:', {
+          orderId: order.id,
+          feedData: order.Feed
+        });
+        return {
+          id: order.id,
+          store_name: order.Stores?.name || 'Unknown Store',
+          feed_type: order.Feed?.feed_type || 'Unknown Feed',
+          amount: order.amount,
+          total_price: order.total_price,
+          status: order.status,
+          purchase_date: order.purchase_date,
+          ingredients: order.Feed?.ingredients || 'No ingredients information available'
+        };
+      });
 
+      console.log('DEBUG - Formatted orders with ingredients:', JSON.stringify(formattedOrders, null, 2));
       setOrders(formattedOrders);
     } catch (error) {
       console.error('Error fetching orders:', error)
@@ -666,6 +711,26 @@ export default function FarmerDashboard() {
                                       <span>Price: ${typeof feed.price === 'number' ? feed.price.toFixed(2) : 'Contact store'}</span>
                                     </div>
                                     <Button 
+                                      variant="ghost" 
+                                      className="col-span-2 mt-1 h-auto p-0 text-left hover:bg-transparent"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setExpandedFeed(expandedFeed === feed.id ? null : feed.id);
+                                      }}
+                                    >
+                                      <span className="text-sm text-muted-foreground underline">
+                                        {expandedFeed === feed.id ? 'Hide ingredients' : 'Show ingredients'}
+                                      </span>
+                                    </Button>
+                                    {expandedFeed === feed.id && (
+                                      <div className="col-span-2 mt-2 rounded-md bg-muted p-3">
+                                        <h4 className="text-sm font-medium mb-1">Ingredients:</h4>
+                                        <p className="text-sm text-muted-foreground">
+                                          {feed.ingredients || 'No ingredients information available'}
+                                        </p>
+                                      </div>
+                                    )}
+                                    <Button 
                                       className="col-span-2 mt-2" 
                                       onClick={() => setSelectedFeed({
                                         feed,
@@ -729,6 +794,23 @@ export default function FarmerDashboard() {
                               <div className="text-sm text-muted-foreground">
                                 Purchased on {new Date(order.purchase_date).toLocaleDateString()}
                               </div>
+                              <Button 
+                                variant="ghost" 
+                                className="mt-1 h-auto p-0 text-left hover:bg-transparent"
+                                onClick={() => setExpandedOrder(expandedOrder === order.id ? null : order.id)}
+                              >
+                                <span className="text-sm text-muted-foreground underline">
+                                  {expandedOrder === order.id ? 'Hide ingredients' : 'Show ingredients'}
+                                </span>
+                              </Button>
+                              {expandedOrder === order.id && (
+                                <div className="mt-2 rounded-md bg-muted p-3">
+                                  <h4 className="text-sm font-medium mb-1">Ingredients:</h4>
+                                  <p className="text-sm text-muted-foreground">
+                                    {order.ingredients}
+                                  </p>
+                                </div>
+                              )}
                               {order.status === 'pending' && (
                                 <Button 
                                   onClick={() => handleCompleteOrder(order.id)}
