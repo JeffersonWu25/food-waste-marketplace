@@ -124,9 +124,16 @@ export function FeedCalculator() {
   const getFeedCalculationFromGemini = async (ingredients: Ingredient[]) => {
     const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
-    const prompt = `You are a legally compliant animal feed calculation system.
+    const prompt = `You are an animal feed calculation system that helps convert surplus food into animal feed.
 
-      Your job is to take a list of expired or surplus ingredients and determine how many pounds of usable animal feed can be produced — for chickens, pigs, cattle, and goats — **based only on what is legally and nutritionally safe**.
+      Your job is to take a list of expired or surplus ingredients and determine how many pounds of usable animal feed can be produced for chickens, pigs, cattle, and goats. Consider the following guidelines:
+
+      1. Most fresh produce, grains, and bakery items are generally safe for animal feed
+      2. Dairy products are safe for pigs and cattle in moderate amounts
+      3. Meat and protein products should be avoided unless specifically processed for feed
+      4. Moldy or spoiled items should be excluded
+      5. Consider the nutritional value and digestibility of each ingredient
+
       Format your response EXACTLY like this example:
       {
         "chicken": 10,
@@ -216,22 +223,17 @@ export function FeedCalculator() {
       // Get the selected ingredients details
       const selectedIngredientDetails = ingredients.filter(ing =>
         selectedItems.includes(ing.id)
-      ).map(ing => ({
-        id: ing.id,
-        name: ing.name,
-        amount: ing.amount,
-        type: ing.type
-      }))
+      ).map(ing => ing.name).join(', ');
 
       // Create listings from calculated feed amounts
       const listings = Object.entries(calculatedFeed)
         .filter(([_, amount]) => amount > 0)
         .map(([feedType, amount]) => ({
           store_id: user.id,
-          feed_type: feedType,
+          feed_type: feedType.charAt(0).toUpperCase() + feedType.slice(1),
           amount: amount,
           price: parseFloat(listingPrices[feedType as keyof typeof listingPrices] || '0'),
-          ingredients: selectedIngredientDetails // Add the ingredients array
+          ingredients: selectedIngredientDetails
         }));
 
       // Insert listings into Feed table
@@ -392,7 +394,7 @@ export function FeedCalculator() {
                             min="0"
                             step="0.01"
                             placeholder="0.00"
-                            value={listingPrices[type as keyof typeof listingPrices]}
+                            value={listingPrices[type as keyof typeof listingPrices] || ""}
                             onChange={(e) => setListingPrices({ ...listingPrices, [type]: e.target.value })}
                             className="rounded-l-none"
                           />
@@ -440,7 +442,7 @@ export function FeedCalculator() {
                         min="0"
                         step="0.01"
                         placeholder="0.00"
-                        value={listingPrices.chicken}
+                        value={listingPrices.chicken || ""}
                         onChange={(e) => setListingPrices({ ...listingPrices, chicken: e.target.value })}
                         className="rounded-l-none"
                         disabled={calculatedFeed.chicken === 0}
@@ -459,7 +461,7 @@ export function FeedCalculator() {
                         min="0"
                         step="0.01"
                         placeholder="0.00"
-                        value={listingPrices.pig}
+                        value={listingPrices.pig || ""}
                         onChange={(e) => setListingPrices({ ...listingPrices, pig: e.target.value })}
                         className="rounded-l-none"
                         disabled={calculatedFeed.pig === 0}
@@ -478,7 +480,7 @@ export function FeedCalculator() {
                         min="0"
                         step="0.01"
                         placeholder="0.00"
-                        value={listingPrices.cattle}
+                        value={listingPrices.cattle || ""}
                         onChange={(e) => setListingPrices({ ...listingPrices, cattle: e.target.value })}
                         className="rounded-l-none"
                         disabled={calculatedFeed.cattle === 0}
@@ -497,7 +499,7 @@ export function FeedCalculator() {
                         min="0"
                         step="0.01"
                         placeholder="0.00"
-                        value={listingPrices.goat}
+                        value={listingPrices.goat || ""}
                         onChange={(e) => setListingPrices({ ...listingPrices, goat: e.target.value })}
                         className="rounded-l-none"
                         disabled={calculatedFeed.goat === 0}
