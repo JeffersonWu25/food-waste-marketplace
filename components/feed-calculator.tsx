@@ -11,6 +11,14 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import Link from "next/link"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 
 // Feed conversion rates (simplified for demonstration)
 const FEED_CONVERSION = {
@@ -77,6 +85,7 @@ export function FeedCalculator() {
     cattle: "",
     goat: "",
   })
+  const [showListingDialog, setShowListingDialog] = useState(false)
 
   // Fetch ingredients from Supabase
   const fetchIngredients = async () => {
@@ -115,7 +124,9 @@ export function FeedCalculator() {
   const getFeedCalculationFromGemini = async (ingredients: Ingredient[]) => {
     const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
 
-    const prompt = `You are a feed calculation system. Given these ingredients, calculate the pounds of animal feed that can be produced.
+    const prompt = `You are a legally compliant animal feed calculation system.
+
+      Your job is to take a list of expired or surplus ingredients and determine how many pounds of usable animal feed can be produced — for chickens, pigs, cattle, and goats — **based only on what is legally and nutritionally safe**.
       Format your response EXACTLY like this example:
       {
         "chicken": 10,
@@ -158,7 +169,7 @@ export function FeedCalculator() {
     }
   };
 
-  // Update the calculateFeed function to handle the text response
+  // Update the calculateFeed function
   const calculateFeed = async () => {
     const selectedIngredients = ingredients.filter((item) => selectedItems.includes(item.id));
 
@@ -171,11 +182,12 @@ export function FeedCalculator() {
 
     if (response) {
       try {
-        // Try to find and extract JSON from the response
         const jsonMatch = response.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const feedAmounts = JSON.parse(jsonMatch[0]);
           setCalculatedFeed(feedAmounts);
+          // Show the dialog after successful calculation
+          setShowListingDialog(true);
         } else {
           toast.error('Could not parse calculation results');
         }
@@ -185,6 +197,16 @@ export function FeedCalculator() {
       }
     }
   };
+
+  // Add this function to handle dialog confirmation
+  const handleCreateListingFromDialog = () => {
+    setShowListingDialog(false)
+    // Switch to the create listings tab
+    const createTab = document.querySelector('[value="create"]') as HTMLElement
+    if (createTab) {
+      createTab.click()
+    }
+  }
 
   const toggleItemSelection = (id: number) => {
     if (selectedItems.includes(id)) {
@@ -442,6 +464,37 @@ export function FeedCalculator() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      <Dialog open={showListingDialog} onOpenChange={setShowListingDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Feed Calculation Complete</DialogTitle>
+            <DialogDescription>
+              Would you like to create listings for the calculated feed amounts?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-4">
+            <div className="grid grid-cols-2 gap-4">
+              {Object.entries(calculatedFeed).map(([type, amount]) => (
+                amount > 0 && (
+                  <div key={type} className="flex flex-col p-3 border rounded-lg">
+                    <span className="text-sm text-muted-foreground capitalize">{type} Feed</span>
+                    <span className="text-lg font-semibold">{amount} lbs</span>
+                  </div>
+                )
+              ))}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowListingDialog(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreateListingFromDialog}>
+              Create Listings
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
