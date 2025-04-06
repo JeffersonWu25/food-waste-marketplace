@@ -1,6 +1,7 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { supabase } from "@/lib/supabase"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -8,39 +9,40 @@ import { Label } from "@/components/ui/label"
 import { Calculator, Tag, ArrowRight } from "lucide-react"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { toast } from "sonner"
 import Link from "next/link"
 
 // Feed conversion rates (simplified for demonstration)
 const FEED_CONVERSION = {
-  Produce: {
+  produce: {
     chicken: 0.8,
     pig: 0.6,
     cattle: 0.4,
     goat: 0.7,
     sheep: 0.6,
   },
-  Bakery: {
+  bakery: {
     chicken: 0.5,
     pig: 0.9,
     cattle: 0.3,
     goat: 0.4,
     sheep: 0.4,
   },
-  Dairy: {
+  dairy: {
     chicken: 0.3,
     pig: 0.8,
     cattle: 0.5,
     goat: 0.6,
     sheep: 0.5,
   },
-  Meat: {
+  protein: {
     chicken: 0.7,
     pig: 0.9,
     cattle: 0.6,
     goat: 0.5,
     sheep: 0.5,
   },
-  "Dry Goods": {
+  other: {
     chicken: 0.9,
     pig: 0.7,
     cattle: 0.5,
@@ -49,15 +51,20 @@ const FEED_CONVERSION = {
   },
 }
 
-export function FeedCalculator() {
-  const [groceryItems, setGroceryItems] = useState([
-    { id: 1, name: "Lettuce", category: "Produce", quantity: 20, unit: "lbs" },
-    { id: 2, name: "Bread", category: "Bakery", quantity: 15, unit: "loaves" },
-    { id: 3, name: "Milk", category: "Dairy", quantity: 10, unit: "gallons" },
-    { id: 4, name: "Apples", category: "Produce", quantity: 30, unit: "lbs" },
-    { id: 5, name: "Chicken", category: "Meat", quantity: 25, unit: "lbs" },
-  ])
+interface Ingredient {
+  id: number
+  name: string
+  store_id: string
+  expiration_date: string
+  status: string
+  amount: number
+  type: string
+}
 
+export function FeedCalculator() {
+  const [ingredients, setIngredients] = useState<Ingredient[]>([])
+  const [loading, setLoading] = useState(true)
+  const [selectedItems, setSelectedItems] = useState<number[]>([])
   const [calculatedFeed, setCalculatedFeed] = useState({
     chicken: 0,
     pig: 0,
@@ -65,8 +72,6 @@ export function FeedCalculator() {
     goat: 0,
     sheep: 0,
   })
-
-  const [selectedItems, setSelectedItems] = useState<number[]>([])
   const [listingPrices, setListingPrices] = useState({
     chicken: "",
     pig: "",
@@ -74,6 +79,39 @@ export function FeedCalculator() {
     goat: "",
     sheep: "",
   })
+
+  // Fetch ingredients from Supabase
+  const fetchIngredients = async () => {
+    try {
+      setLoading(true)
+      // Get the current user's ID
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        toast.error('Please log in to access this feature')
+        return
+      }
+
+      const { data, error } = await supabase
+        .from('Ingredients')
+        .select('*')
+        .eq('store_id', user.id)
+        .order('expiration_date', { ascending: true })
+
+      if (error) throw error
+
+      setIngredients(data || [])
+    } catch (error: any) {
+      console.error('Error fetching ingredients:', error)
+      toast.error('Failed to load ingredients')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Load ingredients when the component mounts
+  useEffect(() => {
+    fetchIngredients()
+  }, [])
 
   // Calculate potential animal feed based on selected grocery items
   const calculateFeed = () => {
@@ -85,22 +123,17 @@ export function FeedCalculator() {
       sheep: 0,
     }
 
-    groceryItems
+    ingredients
       .filter((item) => selectedItems.includes(item.id))
       .forEach((item) => {
-        // Convert quantity to pounds for calculation
-        let quantityInLbs = item.quantity
-        if (item.unit === "gallons") quantityInLbs = item.quantity * 8.34 // Approximate weight of a gallon
-        if (item.unit === "loaves") quantityInLbs = item.quantity * 1.5 // Approximate weight of a loaf
-
         // Apply conversion rates
-        const conversions = FEED_CONVERSION[item.category as keyof typeof FEED_CONVERSION]
+        const conversions = FEED_CONVERSION[item.type as keyof typeof FEED_CONVERSION]
         if (conversions) {
-          result.chicken += quantityInLbs * conversions.chicken
-          result.pig += quantityInLbs * conversions.pig
-          result.cattle += quantityInLbs * conversions.cattle
-          result.goat += quantityInLbs * conversions.goat
-          result.sheep += quantityInLbs * conversions.sheep
+          result.chicken += item.amount * conversions.chicken
+          result.pig += item.amount * conversions.pig
+          result.cattle += item.amount * conversions.cattle
+          result.goat += item.amount * conversions.goat
+          result.sheep += item.amount * conversions.sheep
         }
       })
 
@@ -146,35 +179,46 @@ export function FeedCalculator() {
               <CardDescription>Choose the items you want to convert into animal feed</CardDescription>
             </CardHeader>
             <CardContent>
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-12">Select</TableHead>
-                    <TableHead>Item Name</TableHead>
-                    <TableHead>Category</TableHead>
-                    <TableHead>Quantity</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {groceryItems.map((item) => (
-                    <TableRow key={item.id}>
-                      <TableCell>
-                        <input
-                          type="checkbox"
-                          checked={selectedItems.includes(item.id)}
-                          onChange={() => toggleItemSelection(item.id)}
-                          className="h-4 w-4 rounded border-gray-300"
-                        />
-                      </TableCell>
-                      <TableCell className="font-medium">{item.name}</TableCell>
-                      <TableCell>{item.category}</TableCell>
-                      <TableCell>
-                        {item.quantity} {item.unit}
-                      </TableCell>
+              {loading ? (
+                <div>Loading...</div>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-12">Select</TableHead>
+                      <TableHead>Item Name</TableHead>
+                      <TableHead>Type</TableHead>
+                      <TableHead>Amount</TableHead>
+                      <TableHead>Expiration Date</TableHead>
+                      <TableHead>Status</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                  </TableHeader>
+                  <TableBody>
+                    {ingredients.map((item) => (
+                      <TableRow key={item.id}>
+                        <TableCell>
+                          <input
+                            type="checkbox"
+                            checked={selectedItems.includes(item.id)}
+                            onChange={() => toggleItemSelection(item.id)}
+                            className="h-4 w-4 rounded border-gray-300"
+                          />
+                        </TableCell>
+                        <TableCell className="font-medium">{item.name}</TableCell>
+                        <TableCell>{item.type}</TableCell>
+                        <TableCell>{item.amount}</TableCell>
+                        <TableCell>{new Date(item.expiration_date).toLocaleDateString()}</TableCell>
+                        <TableCell>
+                          <span className={`px-2 py-1 rounded-full text-xs ${item.status === 'Expired' ? 'bg-red-100 text-red-800' : 'bg-yellow-100 text-yellow-800'
+                            }`}>
+                            {item.status}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              )}
             </CardContent>
             <CardFooter>
               <Button onClick={calculateFeed} className="ml-auto">
@@ -284,7 +328,7 @@ export function FeedCalculator() {
                   <div className="space-y-2">
                     <Label htmlFor="goat-price">Goat Feed ({calculatedFeed.goat} lbs)</Label>
                     <div className="flex">
-                      <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500">
+                      <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-300 bg-gray-50 text-gray-500">
                         $
                       </span>
                       <Input
@@ -322,13 +366,8 @@ export function FeedCalculator() {
                 </div>
               </div>
             </CardContent>
-            <CardFooter className="flex justify-between">
-              <Button variant="outline" asChild>
-                <Link href="/dashboard/store?tab=calculate">
-                  <ArrowRight className="mr-2 h-4 w-4 rotate-180" /> Back to Calculator
-                </Link>
-              </Button>
-              <Button onClick={createListings}>
+            <CardFooter>
+              <Button onClick={createListings} className="ml-auto">
                 <Tag className="mr-2 h-4 w-4" /> Create Listings
               </Button>
             </CardFooter>
