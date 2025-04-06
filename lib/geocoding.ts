@@ -1,16 +1,4 @@
-import { Loader } from '@googlemaps/js-api-loader';
-
-const GOOGLE_MAPS_API_KEY = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
-
-if (!GOOGLE_MAPS_API_KEY) {
-  console.error('Google Maps API key is not set in environment variables');
-}
-
-const loader = new Loader({
-  apiKey: GOOGLE_MAPS_API_KEY || '',
-  version: "weekly",
-  libraries: ["places", "geocoding"]
-});
+import { loader } from './google-maps-config';
 
 export interface GeocodingResult {
   lat: number;

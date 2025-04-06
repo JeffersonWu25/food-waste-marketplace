@@ -1,22 +1,15 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
-import { Loader } from "@googlemaps/js-api-loader"
-
-export interface Location {
-  lat: number
-  lng: number
-  address?: string
-  title?: string
-}
+import { loader, Location } from "@/lib/google-maps-config"
 
 interface GoogleMapProps {
-  locations: Location[]
-  center?: Location
-  zoom?: number
-  height?: string
-  className?: string
-  onMarkerClick?: (location: Location) => void
+  locations: Location[];
+  center?: Location;
+  zoom?: number;
+  height?: string;
+  className?: string;
+  onMarkerClick?: (location: Location) => void;
 }
 
 export function GoogleMap({
@@ -35,15 +28,16 @@ export function GoogleMap({
 
   useEffect(() => {
     const initMap = async () => {
-      try {
-        const loader = new Loader({
-          apiKey: process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "",
-          version: "weekly",
-        })
+      if (!locations.length) return;
 
+      try {
         const google = await loader.load()
+        
+        // Use first location as center if none provided
+        const mapCenter = center || locations[0]
+        
         const map = new google.maps.Map(mapRef.current!, {
-          center: center || locations[0],
+          center: mapCenter,
           zoom,
           styles: [
             {
@@ -80,7 +74,7 @@ export function GoogleMap({
       }
     }
 
-    if (mapRef.current && locations && locations.length > 0) {
+    if (mapRef.current && locations.length > 0) {
       initMap()
     }
 

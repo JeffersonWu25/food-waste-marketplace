@@ -19,6 +19,7 @@ import { FeedRecommendations } from "@/components/feed-recommendations"
 import { supabase } from "@/lib/supabase"
 import { geocodeAddress } from "@/lib/geocoding"
 import { toast } from "sonner"
+import { FeedDetailsModal } from "@/components/feed-details-modal"
 
 interface Store {
   id: string
@@ -70,13 +71,29 @@ export default function FarmerDashboard() {
   const [loading, setLoading] = useState(true)
   const [distance, setDistance] = useState([25])
   const [feedType, setFeedType] = useState("all")
-  const [showMap, setShowMap] = useState(false) // Default to false since map requires API key
+  const [maxPrice, setMaxPrice] = useState<number | "any">("any")
+  const [showMap, setShowMap] = useState(false)
   const [farmLocation, setFarmLocation] = useState<{lat: number, lng: number} | null>(null)
   const [livestock, setLivestock] = useState<Livestock>({
     cattle: 50,
     pigs: 30,
     chickens: 100
   })
+  const [selectedFeed, setSelectedFeed] = useState<{
+    feed: Feed;
+    storeName: string;
+    storeAddress: string;
+  } | null>(null);
+  const [orders, setOrders] = useState<{
+    id: string;
+    store_name: string;
+    feed_type: string;
+    amount: number;
+    total_price: number;
+    status: string;
+    purchase_date: string;
+  }[]>([])
+  const [processingOrder, setProcessingOrder] = useState<string | null>(null);
 
   // Get current farm's location
   const getCurrentFarmLocation = async () => {
@@ -249,10 +266,210 @@ export default function FarmerDashboard() {
     fetchListings()
   }, [distance])
 
-  // Filter listings based on feed type
-  const filteredListings = listings.filter(listing => 
-    feedType === "all" || listing.feed.some(feed => feed.feed_type.toLowerCase() === feedType.toLowerCase())
-  )
+  // Filter listings based on feed type and price
+  const filteredListings = listings.map(listing => ({
+    ...listing,
+    feed: listing.feed.filter(feed => {
+      const matchesType = feedType === "all" || feed.feed_type.toLowerCase() === feedType.toLowerCase();
+      const matchesPrice = maxPrice === "any" || (typeof feed.price === 'number' && feed.price <= Number(maxPrice));
+      return matchesType && matchesPrice;
+    })
+  })).filter(listing => {
+    // Only include listings that have at least one matching feed after filtering
+    return listing.feed.length > 0 && listing.distance <= distance[0];
+  });
+
+  // Fetch orders
+  const fetchOrders = async () => {
+    try {
+      const { data: ordersData, error: ordersError } = await supabase
+        .from('Purchases')
+        .select(`
+          *,
+          Stores (name),
+          Feed (feed_type)
+        `)
+        .order('purchase_date', { ascending: false })
+
+      if (ordersError) {
+        console.error('Order fetch error:', ordersError);
+        throw ordersError;
+      }
+
+      console.log('Fetched orders:', ordersData);
+
+      const formattedOrders = ordersData.map(order => ({
+        id: order.id,
+        store_name: order.Stores?.name || 'Unknown Store',
+        feed_type: order.Feed?.feed_type || 'Unknown Feed',
+        amount: order.amount,
+        total_price: order.total_price,
+        status: order.status,
+        purchase_date: order.purchase_date
+      }));
+
+      setOrders(formattedOrders);
+    } catch (error) {
+      console.error('Error fetching orders:', error)
+      toast.error('Failed to load orders')
+    }
+  }
+
+  // Initialize data
+  useEffect(() => {
+    fetchOrders()
+  }, [])
+
+  // Handle completing an order
+  const handleCompleteOrder = async (orderId: string) => {
+    try {
+      setProcessingOrder(orderId);
+      console.log('Starting to complete order:', orderId);
+
+      // Get the order details first
+      const { data: order, error: orderError } = await supabase
+        .from('Purchases')
+        .select(`
+          *,
+          Feed!inner (
+            id,
+            amount,
+            feed_type,
+            store_id
+          )
+        `)
+        .eq('id', orderId)
+        .single();
+
+      if (orderError) {
+        console.error('Order fetch error:', orderError);
+        throw new Error(`Failed to fetch order: ${orderError.message}`);
+      }
+
+      if (!order || !order.Feed) {
+        console.error('No order or feed data found:', order);
+        throw new Error('Order or feed data not found');
+      }
+
+      console.log('Found order:', order);
+
+      // Calculate new feed amount
+      const newFeedAmount = order.Feed.amount - order.amount;
+      console.log('Calculating new feed amount:', {
+        currentAmount: order.Feed.amount,
+        purchasedAmount: order.amount,
+        newAmount: newFeedAmount
+      });
+
+      // Calculate reduction ratio for ingredients
+      const reductionRatio = order.amount / order.Feed.amount;
+
+      // Start transaction
+      // 1. Update order status and remove feed_id reference
+      const { error: statusError } = await supabase
+        .from('Purchases')
+        .update({ 
+          status: 'completed',
+          feed_id: null  // Remove reference to allow feed deletion
+        })
+        .eq('id', orderId);
+
+      if (statusError) {
+        console.error('Status update error:', statusError);
+        throw new Error(`Failed to update status: ${statusError.message}`);
+      }
+
+      console.log('Updated order status to completed');
+
+      // 2. Handle feed
+      if (newFeedAmount <= 0) {
+        // Delete the feed if amount would be 0 or less
+        const { error: deleteFeedError } = await supabase
+          .from('Feed')
+          .delete()
+          .eq('id', order.feed_id);
+
+        if (deleteFeedError) {
+          console.error('Feed deletion error:', deleteFeedError);
+          throw new Error(`Failed to delete feed: ${deleteFeedError.message}`);
+        }
+        console.log('Deleted feed record');
+      } else {
+        // Update the feed amount if there's still some left
+        const { error: feedError } = await supabase
+          .from('Feed')
+          .update({ amount: newFeedAmount })
+          .eq('id', order.feed_id);
+
+        if (feedError) {
+          console.error('Feed update error:', feedError);
+          throw new Error(`Failed to update feed: ${feedError.message}`);
+        }
+        console.log('Updated feed amount');
+      }
+
+      // 3. Handle ingredients
+      console.log('Fetching ingredients for feed type:', order.Feed.feed_type);
+      const { data: ingredients, error: ingredientsError } = await supabase
+        .from('Ingredients')
+        .select('*')
+        .eq('store_id', order.Feed.store_id)
+        .eq('type', order.Feed.feed_type.toLowerCase());
+
+      if (ingredientsError) {
+        console.error('Ingredients fetch error:', ingredientsError);
+        throw new Error(`Failed to fetch ingredients: ${ingredientsError.message}`);
+      }
+
+      console.log('Found ingredients:', ingredients);
+      
+      // Update or delete each ingredient
+      for (const ingredient of ingredients) {
+        const newAmount = ingredient.amount - (ingredient.amount * reductionRatio);
+        console.log('Processing ingredient:', {
+          id: ingredient.id,
+          currentAmount: ingredient.amount,
+          newAmount: newAmount
+        });
+
+        if (newAmount <= 0) {
+          // Delete the ingredient if amount would be 0 or less
+          const { error: deleteIngredientError } = await supabase
+            .from('Ingredients')
+            .delete()
+            .eq('id', ingredient.id);
+
+          if (deleteIngredientError) {
+            console.error('Ingredient deletion error:', deleteIngredientError);
+            throw new Error(`Failed to delete ingredient: ${deleteIngredientError.message}`);
+          }
+          console.log('Deleted ingredient:', ingredient.id);
+        } else {
+          // Update the ingredient amount if there's still some left
+          const { error: updateError } = await supabase
+            .from('Ingredients')
+            .update({ amount: newAmount })
+            .eq('id', ingredient.id);
+
+          if (updateError) {
+            console.error('Ingredient update error:', updateError);
+            throw new Error(`Failed to update ingredient: ${updateError.message}`);
+          }
+          console.log('Updated ingredient:', ingredient.id);
+        }
+      }
+
+      console.log('Order completion successful');
+      toast.success('Order completed successfully');
+      fetchOrders(); // Refresh the orders list
+      fetchListings(); // Refresh the listings to reflect deleted feeds
+    } catch (error: any) {
+      console.error('Error completing order:', error);
+      toast.error(error.message || 'Failed to complete order');
+    } finally {
+      setProcessingOrder(null);
+    }
+  };
 
   return (
     <div className="flex min-h-screen flex-col">
@@ -327,20 +544,6 @@ export default function FarmerDashboard() {
               <div className="grid gap-6 md:grid-cols-[300px_1fr]">
                 <div className="space-y-6">
                   <FeedRecommendations livestock={livestock} />
-                  <div className="p-4 border rounded-md space-y-2">
-                    <h3 className="font-semibold">Debug Information:</h3>
-                    <p>Farm Location: {farmLocation ? `${farmLocation.lat}, ${farmLocation.lng}` : 'Not loaded'}</p>
-                    <p>Total Stores Found: {listings.length}</p>
-                    <p>Stores within {distance[0]} miles: {filteredListings.length}</p>
-                    <div className="text-sm">
-                      <p className="font-semibold mt-2">All Store Coordinates:</p>
-                      {listings.map((store, index) => (
-                        <div key={store.id} className="mt-1">
-                          {store.name}: {store.lat}, {store.lng} (Distance: {store.distance.toFixed(1)} mi)
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="feed-type">Feed Type</Label>
@@ -367,24 +570,19 @@ export default function FarmerDashboard() {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="price">Max Price</Label>
-                      <Select defaultValue="any">
+                      <Select value={maxPrice.toString()} onValueChange={(value) => setMaxPrice(value === "any" ? "any" : Number(value))}>
                         <SelectTrigger id="price">
                           <SelectValue placeholder="Select price range" />
                         </SelectTrigger>
                         <SelectContent>
                           <SelectItem value="any">Any Price</SelectItem>
+                          <SelectItem value="5">Under $5</SelectItem>
                           <SelectItem value="10">Under $10</SelectItem>
-                          <SelectItem value="25">Under $25</SelectItem>
+                          <SelectItem value="30">Under $30</SelectItem>
                           <SelectItem value="50">Under $50</SelectItem>
-                          <SelectItem value="100">Under $100</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="flex items-center space-x-2">
-                      <Switch id="available-now" />
-                      <Label htmlFor="available-now">Available for pickup now</Label>
-                    </div>
-                    <Button className="w-full">Apply Filters</Button>
                   </div>
                 </div>
                 <div className="space-y-6">
@@ -399,7 +597,32 @@ export default function FarmerDashboard() {
                         )}
                       </p>
                     </div>
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        id="show-map"
+                        checked={showMap}
+                        onCheckedChange={setShowMap}
+                      />
+                      <Label htmlFor="show-map">Show Map</Label>
+                    </div>
                   </div>
+
+                  {showMap && farmLocation && (
+                    <div className="h-[400px] rounded-lg border">
+                      <GoogleMap
+                        center={farmLocation}
+                        locations={[
+                          { ...farmLocation, title: "Your Farm" },
+                          ...filteredListings.map(store => ({
+                            lat: store.lat!,
+                            lng: store.lng!,
+                            title: store.name,
+                            address: store.address
+                          }))
+                        ]}
+                      />
+                    </div>
+                  )}
 
                   {loading ? (
                     <div className="text-center py-8">Loading...</div>
@@ -424,22 +647,36 @@ export default function FarmerDashboard() {
                           </CardHeader>
                           <CardContent className="pb-2">
                             {listing.feed.length > 0 ? (
-                              <div className="grid grid-cols-2 gap-2 text-sm">
-                                <div className="flex items-center gap-1">
-                                  <Package className="h-4 w-4 text-muted-foreground" />
-                                  <span className="capitalize">{listing.feed[0].feed_type} Feed</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <ShoppingCart className="h-4 w-4 text-muted-foreground" />
-                                  <span>{listing.feed[0].amount} lbs</span>
-                                </div>
-                                <div className="flex items-center gap-1">
-                                  <Clock className="h-4 w-4 text-muted-foreground" />
-                                  <span>Available Now</span>
-                                </div>
-                                <div className="flex items-center gap-1 font-medium">
-                                  <span>Price: ${listing.feed[0].price.toFixed(2)}</span>
-                                </div>
+                              <div className="space-y-2">
+                                {listing.feed.map((feed, index) => (
+                                  <div key={feed.id} className={`grid grid-cols-2 gap-2 text-sm ${index > 0 ? 'pt-2 border-t' : ''}`}>
+                                    <div className="flex items-center gap-1">
+                                      <Package className="h-4 w-4 text-muted-foreground" />
+                                      <span className="capitalize">{feed.feed_type || 'Unknown'} Feed</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <ShoppingCart className="h-4 w-4 text-muted-foreground" />
+                                      <span>{feed.amount ? `${feed.amount} lbs` : 'Amount not specified'}</span>
+                                    </div>
+                                    <div className="flex items-center gap-1">
+                                      <Clock className="h-4 w-4 text-muted-foreground" />
+                                      <span>Available Now</span>
+                                    </div>
+                                    <div className="flex items-center gap-1 font-medium">
+                                      <span>Price: ${typeof feed.price === 'number' ? feed.price.toFixed(2) : 'Contact store'}</span>
+                                    </div>
+                                    <Button 
+                                      className="col-span-2 mt-2" 
+                                      onClick={() => setSelectedFeed({
+                                        feed,
+                                        storeName: listing.name,
+                                        storeAddress: listing.address
+                                      })}
+                                    >
+                                      Purchase
+                                    </Button>
+                                  </div>
+                                ))}
                               </div>
                             ) : (
                               <div className="text-sm text-muted-foreground">
@@ -447,11 +684,6 @@ export default function FarmerDashboard() {
                               </div>
                             )}
                           </CardContent>
-                          <CardFooter>
-                            <Button className="w-full" disabled={listing.feed.length === 0}>
-                              {listing.feed.length > 0 ? "Purchase" : "No Feed Available"}
-                            </Button>
-                          </CardFooter>
                         </Card>
                       ))}
                     </div>
@@ -472,15 +704,69 @@ export default function FarmerDashboard() {
                 </div>
 
                 <div className="rounded-md border">
-                  <div className="p-4 text-center text-muted-foreground">
-                    You don't have any orders yet. Start by purchasing feed from available listings.
-                  </div>
+                  {loading ? (
+                    <div className="p-4 text-center text-muted-foreground">
+                      Loading your orders...
+                    </div>
+                  ) : (
+                    <div className="divide-y">
+                      {orders?.length > 0 ? (
+                        orders.map((order) => (
+                          <div key={order.id} className="p-4">
+                            <div className="grid gap-1">
+                              <div className="flex items-center justify-between">
+                                <div className="font-semibold">{order.store_name}</div>
+                                <Badge variant={order.status === 'pending' ? 'outline' : 'default'}>
+                                  {order.status}
+                                </Badge>
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                {order.feed_type} - {order.amount} lbs
+                              </div>
+                              <div className="text-sm">
+                                Total: ${order.total_price.toFixed(2)}
+                              </div>
+                              <div className="text-sm text-muted-foreground">
+                                Purchased on {new Date(order.purchase_date).toLocaleDateString()}
+                              </div>
+                              {order.status === 'pending' && (
+                                <Button 
+                                  onClick={() => handleCompleteOrder(order.id)}
+                                  disabled={processingOrder === order.id}
+                                  className="mt-2"
+                                >
+                                  {processingOrder === order.id ? 'Processing...' : 'Complete Order'}
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="p-4 text-center text-muted-foreground">
+                          You don't have any orders yet. Start by purchasing feed from available listings.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             </TabsContent>
           </Tabs>
         </main>
       </div>
+      {selectedFeed && (
+        <FeedDetailsModal
+          isOpen={!!selectedFeed}
+          onClose={() => {
+            setSelectedFeed(null);
+            fetchOrders(); // Fetch orders when modal closes
+          }}
+          feed={selectedFeed.feed}
+          storeName={selectedFeed.storeName}
+          storeAddress={selectedFeed.storeAddress}
+          onPurchaseComplete={fetchOrders} // Add this prop to refresh orders after purchase
+        />
+      )}
     </div>
   )
 }
