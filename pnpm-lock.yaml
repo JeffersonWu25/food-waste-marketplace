@@ -98,6 +98,9 @@ importers:
       '@supabase/supabase-js':
         specifier: ^2.49.4
         version: 2.49.4
+      '@types/google.maps':
+        specifier: ^3.58.1
+        version: 3.58.1
       autoprefixer:
         specifier: ^10.4.20
         version: 10.4.21(postcss@8.5.3)
@@ -1072,6 +1075,9 @@ packages:
 
   '@types/d3-timer@3.0.2':
     resolution: {integrity: sha512-Ps3T8E8dZDam6fUyNiMkekK3XUsaUEik+idO9/YjPtfj2qruF8tFBXS7XhtE4iIXBLxhmLjP3SXpLhVf21I9Lw==}
+
+  '@types/google.maps@3.58.1':
+    resolution: {integrity: sha512-X9QTSvGJ0nCfMzYOnaVs/k6/4L+7F5uCS+4iUmkLEls6J9S/Phv+m/i3mDeyc49ZBgwab3EFO1HEoBY7k98EGQ==}
 
   '@types/node@22.14.0':
     resolution: {integrity: sha512-Kmpl+z84ILoG+3T/zQFyAJsU6EPTmOCj8/2+83fSN6djd6I4o7uOuGIH6vq3PrjY5BGitSbFuMN18j3iknubbA==}
@@ -2795,6 +2801,8 @@ snapshots:
   '@types/d3-time@3.0.4': {}
 
   '@types/d3-timer@3.0.2': {}
+
+  '@types/google.maps@3.58.1': {}
 
   '@types/node@22.14.0':
     dependencies:

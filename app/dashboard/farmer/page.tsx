@@ -14,16 +14,55 @@ import { Switch } from "@/components/ui/switch"
 import { GoogleMap } from "@/components/google-map"
 import { FarmerSidebar } from "@/components/farmer-sidebar"
 import { LivestockInventory } from "@/components/livestock-inventory"
+import { FeedRecommendations } from "@/components/feed-recommendations"
+
+interface Listing {
+  id: number
+  storeName: string
+  address: string
+  distance: number
+  feedType: string
+  quantity: string
+  price: string
+  expiry: string
+  lat: number
+  lng: number
+}
+
+interface Livestock {
+  cattle: number
+  pigs: number
+  chickens: number
+}
 
 export default function FarmerDashboard() {
-  const [listings, setListings] = useState([])
+  const [listings, setListings] = useState<Listing[]>([])
   const [distance, setDistance] = useState([25])
   const [feedType, setFeedType] = useState("all")
   const [showMap, setShowMap] = useState(true)
+  const [livestock, setLivestock] = useState<Livestock>({
+    cattle: 50,
+    pigs: 30,
+    chickens: 100
+  })
+
+  // Convert listings to locations for the map
+  const locations = listings.map((listing) => ({
+    lat: listing.lat,
+    lng: listing.lng,
+    address: listing.address,
+    title: listing.storeName,
+  }))
+
+  // Default center (can be replaced with user's location)
+  const defaultCenter = {
+    lat: 40.7128,
+    lng: -74.006,
+  }
 
   // Mock data for demonstration
   useEffect(() => {
-    const mockListings = [
+    const mockListings: Listing[] = [
       {
         id: 1,
         storeName: "Fresh Market",
@@ -164,10 +203,9 @@ export default function FarmerDashboard() {
             <TabsContent value="search" className="space-y-6">
               <div className="grid gap-6 md:grid-cols-[300px_1fr]">
                 <div className="space-y-6">
-                  <div className="space-y-2">
-                    <h2 className="text-2xl font-bold tracking-tight">Filters</h2>
-                    <p className="text-sm text-muted-foreground">Find the right food waste for your animals.</p>
-                  </div>
+                  {/* Gemini AI Recommendations */}
+                  <FeedRecommendations livestock={livestock} />
+
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="feed-type">Feed Type</Label>
@@ -242,7 +280,7 @@ export default function FarmerDashboard() {
 
                   {showMap && (
                     <div className="w-full h-[300px] rounded-lg overflow-hidden border">
-                      <GoogleMap listings={listings} />
+                      <GoogleMap locations={locations} center={defaultCenter} />
                     </div>
                   )}
 

@@ -1,9 +1,40 @@
+"use client"
+
+import { useState } from "react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
+import { GoogleMap, Location } from "@/components/google-map"
 
 export default function ContactPage() {
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    message: "",
+  })
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    // Handle form submission
+    console.log(formData)
+  }
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) => {
+    const { name, value } = e.target
+    setFormData((prev) => ({ ...prev, [name]: value }))
+  }
+
+  // Example location for the contact page
+  const officeLocation: Location = {
+    lat: 40.7128,
+    lng: -74.006,
+    address: "123 Main St, New York, NY 10001",
+    title: "Our Office",
+  }
+
   return (
     <div className="flex flex-col min-h-screen">
       <header className="border-b">
@@ -35,60 +66,79 @@ export default function ContactPage() {
       <main className="flex-1">
         <section className="w-full py-12 md:py-24 lg:py-32">
           <div className="container px-4 md:px-6">
-            <div className="grid gap-6 lg:grid-cols-2 lg:gap-12">
-              <div className="space-y-4">
-                <h1 className="text-3xl font-bold tracking-tighter sm:text-4xl md:text-5xl">Contact Us</h1>
-                <p className="text-muted-foreground">
-                  Have questions about FarmConnect? We'd love to hear from you. Fill out the form and we'll get back to you as soon as possible.
-                </p>
-                <div className="space-y-4">
-                  <div>
-                    <h3 className="text-lg font-semibold">Email</h3>
-                    <p className="text-muted-foreground">contact@farmconnect.com</p>
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-semibold">Phone</h3>
-                    <p className="text-muted-foreground">(555) 123-4567</p>
-                  </div>
-                  <div>
-                    <h3 className="text-lg font-semibold">Address</h3>
-                    <p className="text-muted-foreground">
-                      123 Farm Street<br />
-                      Chicago, IL 60601
-                    </p>
-                  </div>
-                </div>
-              </div>
-              <div className="space-y-4">
-                <form className="space-y-4">
-                  <div className="grid gap-4">
-                    <div className="grid gap-2">
-                      <label htmlFor="name" className="text-sm font-medium">
+            <div className="max-w-4xl mx-auto">
+              <h1 className="text-3xl font-bold mb-8">Contact Us</h1>
+              
+              <div className="grid md:grid-cols-2 gap-8">
+                <div>
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                    <div>
+                      <label htmlFor="name" className="block text-sm font-medium mb-1">
                         Name
                       </label>
-                      <Input id="name" placeholder="Enter your name" />
+                      <Input
+                        id="name"
+                        name="name"
+                        value={formData.name}
+                        onChange={handleChange}
+                        required
+                      />
                     </div>
-                    <div className="grid gap-2">
-                      <label htmlFor="email" className="text-sm font-medium">
+                    
+                    <div>
+                      <label htmlFor="email" className="block text-sm font-medium mb-1">
                         Email
                       </label>
-                      <Input id="email" type="email" placeholder="Enter your email" />
+                      <Input
+                        id="email"
+                        name="email"
+                        type="email"
+                        value={formData.email}
+                        onChange={handleChange}
+                        required
+                      />
                     </div>
-                    <div className="grid gap-2">
-                      <label htmlFor="subject" className="text-sm font-medium">
-                        Subject
-                      </label>
-                      <Input id="subject" placeholder="Enter the subject" />
-                    </div>
-                    <div className="grid gap-2">
-                      <label htmlFor="message" className="text-sm font-medium">
+                    
+                    <div>
+                      <label htmlFor="message" className="block text-sm font-medium mb-1">
                         Message
                       </label>
-                      <Textarea id="message" placeholder="Enter your message" className="min-h-[100px]" />
+                      <Textarea
+                        id="message"
+                        name="message"
+                        value={formData.message}
+                        onChange={handleChange}
+                        required
+                        className="min-h-[150px]"
+                      />
                     </div>
+                    
+                    <Button type="submit" className="w-full">
+                      Send Message
+                    </Button>
+                  </form>
+                </div>
+                
+                <div className="space-y-4">
+                  <div>
+                    <h2 className="text-xl font-semibold mb-2">Our Location</h2>
+                    <p className="text-muted-foreground">{officeLocation.address}</p>
                   </div>
-                  <Button type="submit">Send Message</Button>
-                </form>
+                  
+                  <div className="h-[300px] rounded-lg overflow-hidden">
+                    <GoogleMap
+                      locations={[officeLocation]}
+                      center={officeLocation}
+                      zoom={15}
+                      onMarkerClick={(location) => {
+                        window.open(
+                          `https://www.google.com/maps/dir/?api=1&destination=${location.lat},${location.lng}`,
+                          "_blank"
+                        )
+                      }}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
