@@ -327,20 +327,6 @@ export default function FarmerDashboard() {
               <div className="grid gap-6 md:grid-cols-[300px_1fr]">
                 <div className="space-y-6">
                   <FeedRecommendations livestock={livestock} />
-                  <div className="p-4 border rounded-md space-y-2">
-                    <h3 className="font-semibold">Debug Information:</h3>
-                    <p>Farm Location: {farmLocation ? `${farmLocation.lat}, ${farmLocation.lng}` : 'Not loaded'}</p>
-                    <p>Total Stores Found: {listings.length}</p>
-                    <p>Stores within {distance[0]} miles: {filteredListings.length}</p>
-                    <div className="text-sm">
-                      <p className="font-semibold mt-2">All Store Coordinates:</p>
-                      {listings.map((store, index) => (
-                        <div key={store.id} className="mt-1">
-                          {store.name}: {store.lat}, {store.lng} (Distance: {store.distance.toFixed(1)} mi)
-                        </div>
-                      ))}
-                    </div>
-                  </div>
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="feed-type">Feed Type</Label>
@@ -399,7 +385,32 @@ export default function FarmerDashboard() {
                         )}
                       </p>
                     </div>
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        id="show-map"
+                        checked={showMap}
+                        onCheckedChange={setShowMap}
+                      />
+                      <Label htmlFor="show-map">Show Map</Label>
+                    </div>
                   </div>
+
+                  {showMap && farmLocation && (
+                    <div className="h-[400px] rounded-lg border">
+                      <GoogleMap
+                        center={farmLocation}
+                        locations={[
+                          { ...farmLocation, title: "Your Farm" },
+                          ...filteredListings.map(store => ({
+                            lat: store.lat!,
+                            lng: store.lng!,
+                            title: store.name,
+                            address: store.address
+                          }))
+                        ]}
+                      />
+                    </div>
+                  )}
 
                   {loading ? (
                     <div className="text-center py-8">Loading...</div>
