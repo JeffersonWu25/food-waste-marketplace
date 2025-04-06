@@ -85,7 +85,7 @@ export function FeedCalculator() {
     cattle: "",
     goat: "",
   })
-  const [showListingDialog, setShowListingDialog] = useState(false)
+  const [showResultsDialog, setShowResultsDialog] = useState(false)
 
   // Fetch ingredients from Supabase
   const fetchIngredients = async () => {
@@ -186,8 +186,7 @@ export function FeedCalculator() {
         if (jsonMatch) {
           const feedAmounts = JSON.parse(jsonMatch[0]);
           setCalculatedFeed(feedAmounts);
-          // Show the dialog after successful calculation
-          setShowListingDialog(true);
+          setShowResultsDialog(true);
         } else {
           toast.error('Could not parse calculation results');
         }
@@ -197,16 +196,6 @@ export function FeedCalculator() {
       }
     }
   };
-
-  // Add this function to handle dialog confirmation
-  const handleCreateListingFromDialog = () => {
-    setShowListingDialog(false)
-    // Switch to the create listings tab
-    const createTab = document.querySelector('[value="create"]') as HTMLElement
-    if (createTab) {
-      createTab.click()
-    }
-  }
 
   const toggleItemSelection = (id: number) => {
     if (selectedItems.includes(id)) {
@@ -224,45 +213,60 @@ export function FeedCalculator() {
         return
       }
 
-      // Create an array of feed listings to insert
+      // Create listings from calculated feed amounts
       const listings = Object.entries(calculatedFeed)
-        .filter(([_, amount]) => amount > 0) // Only create listings for non-zero amounts
+        .filter(([_, amount]) => amount > 0)
         .map(([feedType, amount]) => ({
           store_id: user.id,
           feed_type: feedType,
           amount: amount,
-          ingredients: selectedItems, // This will store the IDs of ingredients used
           price: parseFloat(listingPrices[feedType as keyof typeof listingPrices] || '0')
-        }))
+        }));
 
-      // Insert the listings into the feeds table
-      const { data, error } = await supabase
-        .from('feeds')
-        .insert(listings)
+      // Insert listings into Feed table
+      const { error: feedError } = await supabase
+        .from('Feed')
+        .insert(listings);
 
-      if (error) throw error
+      if (feedError) {
+        console.error('Feed insertion error:', feedError);
+        throw new Error(`Failed to create feed listings: ${feedError.message}`);
+      }
 
-      toast.success('Listings created successfully!')
-      // Clear the form
-      setSelectedItems([])
+      // Delete used ingredients
+      const { error: deleteError } = await supabase
+        .from('Ingredients')
+        .delete()
+        .in('id', selectedItems);
+
+      if (deleteError) {
+        console.error('Ingredient deletion error:', deleteError);
+        throw new Error(`Failed to delete ingredients: ${deleteError.message}`);
+      }
+
+      // Success - clear form and refresh
+      toast.success('Listings created and ingredients removed successfully!');
+      setSelectedItems([]);
       setCalculatedFeed({
         chicken: 0,
         pig: 0,
         cattle: 0,
         goat: 0,
-      })
+      });
       setListingPrices({
         chicken: "",
         pig: "",
         cattle: "",
         goat: "",
-      })
+      });
+
+      await fetchIngredients();
 
     } catch (error: any) {
-      console.error('Error creating listings:', error)
-      toast.error('Failed to create listings')
+      console.error('Operation failed:', error);
+      toast.error(error.message || 'Failed to create listings');
     }
-  }
+  };
 
   return (
     <div className="space-y-6">
@@ -356,13 +360,49 @@ export function FeedCalculator() {
                   <span className="text-2xl font-bold">{calculatedFeed.goat} lbs</span>
                 </div>
               </div>
+
+              {Object.values(calculatedFeed).some(amount => amount > 0) && (
+                <div className="mt-6 space-y-4">
+                  <div className="border-t pt-4">
+                    <h3 className="text-lg font-medium">Set Prices for Feed Listings</h3>
+                    <p className="text-sm text-muted-foreground">Enter prices for the calculated feed amounts</p>
+                  </div>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
+                    {Object.entries(calculatedFeed).map(([type, amount]) => amount > 0 && (
+                      <div key={type} className="space-y-2">
+                        <Label htmlFor={`${type}-price`}>{type.charAt(0).toUpperCase() + type.slice(1)} Feed ({amount} lbs)</Label>
+                        <div className="flex">
+                          <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500">
+                            $
+                          </span>
+                          <Input
+                            id={`${type}-price`}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            placeholder="0.00"
+                            value={listingPrices[type as keyof typeof listingPrices]}
+                            onChange={(e) => setListingPrices({ ...listingPrices, [type]: e.target.value })}
+                            className="rounded-l-none"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="flex justify-end mt-4">
+                    <Button
+                      onClick={createListings}
+                      disabled={selectedItems.length === 0}
+                    >
+                      <Tag className="mr-2 h-4 w-4" /> Create Listings
+                    </Button>
+                  </div>
+                </div>
+              )}
             </CardContent>
             <CardFooter className="flex justify-between">
               <Button onClick={calculateFeed}>
                 <Calculator className="mr-2 h-4 w-4" /> Recalculate
-              </Button>
-              <Button onClick={createListings} variant="outline">
-                <Tag className="mr-2 h-4 w-4" /> List Feed Now
               </Button>
             </CardFooter>
           </Card>
@@ -457,7 +497,11 @@ export function FeedCalculator() {
               </div>
             </CardContent>
             <CardFooter>
-              <Button onClick={createListings} className="ml-auto">
+              <Button
+                onClick={createListings}
+                className="ml-auto"
+                disabled={selectedItems.length === 0 || !Object.values(calculatedFeed).some(amount => amount > 0)}
+              >
                 <Tag className="mr-2 h-4 w-4" /> Create Listings
               </Button>
             </CardFooter>
@@ -465,12 +509,12 @@ export function FeedCalculator() {
         </TabsContent>
       </Tabs>
 
-      <Dialog open={showListingDialog} onOpenChange={setShowListingDialog}>
+      <Dialog open={showResultsDialog} onOpenChange={setShowResultsDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Feed Calculation Complete</DialogTitle>
+            <DialogTitle>Feed Calculation Results</DialogTitle>
             <DialogDescription>
-              Would you like to create listings for the calculated feed amounts?
+              Here are the calculated feed amounts that can be produced:
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-4 py-4">
@@ -486,11 +530,8 @@ export function FeedCalculator() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowListingDialog(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleCreateListingFromDialog}>
-              Create Listings
+            <Button onClick={() => setShowResultsDialog(false)}>
+              Continue
             </Button>
           </DialogFooter>
         </DialogContent>
