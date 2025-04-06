@@ -1,22 +1,103 @@
 "use client"
 
-import type React from "react"
-
 import { useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { supabase } from "@/lib/supabase"
+import { toast } from "sonner"
 
 export default function LoginPage() {
+  const router = useRouter()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    // Handle login logic here
-    console.log("Login attempt with:", { email, password })
+    setIsLoading(true)
+
+    try {
+      console.log("Attempting to sign in with:", { email: email.trim() })
+
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email: email.trim(),
+        password,
+      })
+
+      if (authError) {
+        console.error("Auth error details:", {
+          message: authError.message,
+          status: authError.status,
+          name: authError.name
+        })
+        toast.error(authError.message)
+        setIsLoading(false)
+        return
+      }
+
+      if (!authData.user) {
+        console.error("No user data returned")
+        toast.error("Failed to sign in")
+        setIsLoading(false)
+        return
+      }
+
+      // Check if user exists in Stores table
+      const { data: storeData, error: storeError } = await supabase
+        .from('Stores')
+        .select('id')
+        .eq('id', authData.user.id)
+        .single()
+
+      if (storeError && storeError.code !== 'PGRST116') { // PGRST116 is "no rows returned"
+        console.error("Error checking store table:", storeError)
+        toast.error("Error checking user type")
+        setIsLoading(false)
+        return
+      }
+
+      // If user is in Stores table, redirect to store dashboard
+      if (storeData) {
+        router.push('/dashboard/store')
+        return
+      }
+
+      // Check if user exists in Farms table
+      const { data: farmData, error: farmError } = await supabase
+        .from('Farms')
+        .select('id')
+        .eq('id', authData.user.id)
+        .single()
+
+      if (farmError && farmError.code !== 'PGRST116') {
+        console.error("Error checking farm table:", farmError)
+        toast.error("Error checking user type")
+        setIsLoading(false)
+        return
+      }
+
+      // If user is in Farms table, redirect to farmer dashboard
+      if (farmData) {
+        router.push('/dashboard/farmer')
+        return
+      }
+
+      // If user is not in either table, show error
+      console.error("User not found in any table")
+      toast.error("Invalid account type")
+      setIsLoading(false)
+    } catch (error) {
+      console.error("Login error details:", error)
+      if (error instanceof Error) {
+        console.error("Error stack:", error.stack)
+      }
+      toast.error("An unexpected error occurred")
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -46,6 +127,7 @@ export default function LoginPage() {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     required
+                    disabled={isLoading}
                   />
                 </div>
                 <div className="space-y-2">
@@ -61,10 +143,11 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
+                    disabled={isLoading}
                   />
                 </div>
-                <Button type="submit" className="w-full">
-                  Sign In
+                <Button type="submit" className="w-full" disabled={isLoading}>
+                  {isLoading ? "Signing in..." : "Sign In"}
                 </Button>
               </form>
             </TabsContent>

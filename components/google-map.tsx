@@ -80,7 +80,7 @@ export function GoogleMap({
       }
     }
 
-    if (mapRef.current && locations.length > 0) {
+    if (mapRef.current && locations && locations.length > 0) {
       initMap()
     }
 
