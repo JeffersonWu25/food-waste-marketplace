@@ -70,14 +70,12 @@ export function FeedCalculator() {
     pig: 0,
     cattle: 0,
     goat: 0,
-    sheep: 0,
   })
   const [listingPrices, setListingPrices] = useState({
     chicken: "",
     pig: "",
     cattle: "",
     goat: "",
-    sheep: "",
   })
 
   // Fetch ingredients from Supabase
@@ -113,37 +111,80 @@ export function FeedCalculator() {
     fetchIngredients()
   }, [])
 
-  // Calculate potential animal feed based on selected grocery items
-  const calculateFeed = () => {
-    const result = {
-      chicken: 0,
-      pig: 0,
-      cattle: 0,
-      goat: 0,
-      sheep: 0,
+  // Add the Gemini API function
+  const getFeedCalculationFromGemini = async (ingredients: Ingredient[]) => {
+    const GEMINI_API_KEY = process.env.NEXT_PUBLIC_GEMINI_API_KEY;
+
+    const prompt = `You are a feed calculation system. Given these ingredients, calculate the pounds of animal feed that can be produced.
+      Format your response EXACTLY like this example:
+      {
+        "chicken": 10,
+        "pig": 15,
+        "cattle": 20,
+        "goat": 12
+      }
+
+      Ingredients:
+      ${ingredients.map(i => `- ${i.amount} units of ${i.name} (${i.type}), expires: ${i.expiration_date}, status: ${i.status}`).join('\n')}`;
+
+    try {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: prompt
+            }]
+          }]
+        })
+      });
+
+      const data = await response.json();
+      console.log('Raw Gemini response:', data); // Debug log
+
+      // Get the text response
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      console.log('Extracted text:', text); // Debug log
+
+      // Return the raw text
+      return text;
+    } catch (error) {
+      console.error('Error calling Gemini API:', error);
+      toast.error('Failed to calculate feed amounts');
+      return null;
+    }
+  };
+
+  // Update the calculateFeed function to handle the text response
+  const calculateFeed = async () => {
+    const selectedIngredients = ingredients.filter((item) => selectedItems.includes(item.id));
+
+    if (selectedIngredients.length === 0) {
+      toast.error('Please select at least one ingredient');
+      return;
     }
 
-    ingredients
-      .filter((item) => selectedItems.includes(item.id))
-      .forEach((item) => {
-        // Apply conversion rates
-        const conversions = FEED_CONVERSION[item.type as keyof typeof FEED_CONVERSION]
-        if (conversions) {
-          result.chicken += item.amount * conversions.chicken
-          result.pig += item.amount * conversions.pig
-          result.cattle += item.amount * conversions.cattle
-          result.goat += item.amount * conversions.goat
-          result.sheep += item.amount * conversions.sheep
+    const response = await getFeedCalculationFromGemini(selectedIngredients);
+
+    if (response) {
+      try {
+        // Try to find and extract JSON from the response
+        const jsonMatch = response.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const feedAmounts = JSON.parse(jsonMatch[0]);
+          setCalculatedFeed(feedAmounts);
+        } else {
+          toast.error('Could not parse calculation results');
         }
-      })
-
-    // Round to 1 decimal place
-    Object.keys(result).forEach((key) => {
-      result[key as keyof typeof result] = Math.round(result[key as keyof typeof result] * 10) / 10
-    })
-
-    setCalculatedFeed(result)
-  }
+      } catch (error) {
+        console.error('Error parsing feed calculation:', error);
+        toast.error('Failed to parse calculation results');
+      }
+    }
+  };
 
   const toggleItemSelection = (id: number) => {
     if (selectedItems.includes(id)) {
@@ -153,10 +194,52 @@ export function FeedCalculator() {
     }
   }
 
-  const createListings = () => {
-    // This would typically create listings for each feed type with a price
-    console.log("Creating listings with prices:", listingPrices)
-    alert("Listings created successfully! Check your active listings.")
+  const createListings = async () => {
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) {
+        toast.error('Please log in to create listings')
+        return
+      }
+
+      // Create an array of feed listings to insert
+      const listings = Object.entries(calculatedFeed)
+        .filter(([_, amount]) => amount > 0) // Only create listings for non-zero amounts
+        .map(([feedType, amount]) => ({
+          store_id: user.id,
+          feed_type: feedType,
+          amount: amount,
+          ingredients: selectedItems, // This will store the IDs of ingredients used
+          price: parseFloat(listingPrices[feedType as keyof typeof listingPrices] || '0')
+        }))
+
+      // Insert the listings into the feeds table
+      const { data, error } = await supabase
+        .from('feeds')
+        .insert(listings)
+
+      if (error) throw error
+
+      toast.success('Listings created successfully!')
+      // Clear the form
+      setSelectedItems([])
+      setCalculatedFeed({
+        chicken: 0,
+        pig: 0,
+        cattle: 0,
+        goat: 0,
+      })
+      setListingPrices({
+        chicken: "",
+        pig: "",
+        cattle: "",
+        goat: "",
+      })
+
+    } catch (error: any) {
+      console.error('Error creating listings:', error)
+      toast.error('Failed to create listings')
+    }
   }
 
   return (
@@ -233,7 +316,7 @@ export function FeedCalculator() {
               <CardDescription>Potential animal feed that can be produced from selected items</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-2">
                 <div className="flex flex-col p-4 border rounded-lg">
                   <span className="text-sm text-muted-foreground">Chicken Feed</span>
                   <span className="text-2xl font-bold">{calculatedFeed.chicken} lbs</span>
@@ -250,12 +333,16 @@ export function FeedCalculator() {
                   <span className="text-sm text-muted-foreground">Goat Feed</span>
                   <span className="text-2xl font-bold">{calculatedFeed.goat} lbs</span>
                 </div>
-                <div className="flex flex-col p-4 border rounded-lg">
-                  <span className="text-sm text-muted-foreground">Sheep Feed</span>
-                  <span className="text-2xl font-bold">{calculatedFeed.sheep} lbs</span>
-                </div>
               </div>
             </CardContent>
+            <CardFooter className="flex justify-between">
+              <Button onClick={calculateFeed}>
+                <Calculator className="mr-2 h-4 w-4" /> Recalculate
+              </Button>
+              <Button onClick={createListings} variant="outline">
+                <Tag className="mr-2 h-4 w-4" /> List Feed Now
+              </Button>
+            </CardFooter>
           </Card>
         </TabsContent>
 
@@ -341,25 +428,6 @@ export function FeedCalculator() {
                         onChange={(e) => setListingPrices({ ...listingPrices, goat: e.target.value })}
                         className="rounded-l-none"
                         disabled={calculatedFeed.goat === 0}
-                      />
-                    </div>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="sheep-price">Sheep Feed ({calculatedFeed.sheep} lbs)</Label>
-                    <div className="flex">
-                      <span className="inline-flex items-center px-3 rounded-l-md border border-r-0 border-gray-300 bg-gray-50 text-gray-500">
-                        $
-                      </span>
-                      <Input
-                        id="sheep-price"
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="0.00"
-                        value={listingPrices.sheep}
-                        onChange={(e) => setListingPrices({ ...listingPrices, sheep: e.target.value })}
-                        className="rounded-l-none"
-                        disabled={calculatedFeed.sheep === 0}
                       />
                     </div>
                   </div>
